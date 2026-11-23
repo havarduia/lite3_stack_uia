@@ -1,15 +1,15 @@
-# Metadata only, for when this becomes a real repo.
-#
-# Do NOT expect `pip install` to work on the robot: the heavy dependencies
-# (rclpy, tf2_ros, the nav2 and realsense message packages) come from the ROS2
-# Foxy workspaces that env/lite3_env.sh sources, not from PyPI, and the
-# robot's pip mirror is unreachable anyway. Scripts add the repo root to
-# sys.path themselves, so nothing needs installing.
+# Metadata only. The robot SDK, lite3-sdk-uia (import lite3), is installed on its
+# own from its repository (~/lite3_sdk on the robot: pip3 install --user
+# --no-build-isolation -e ~/lite3_sdk); the rest (rclpy, tf2_ros, the nav2 and
+# realsense message packages) comes from the ROS2 Foxy workspaces that
+# env/lite3_env.sh sources, not from PyPI. Scripts add the repo root to
+# sys.path themselves, so this repository needs no installing.
 [project]
 name = "lite3-robot"
 version = "0.1.0"
 description = "Python API and behaviours for a DeepRobotics Lite3 Pro on ROS2 Foxy"
 requires-python = ">=3.8"
+dependencies = ["lite3-sdk-uia"]
 
 [tool.setuptools]
 packages = ["robot"]

@@ -46,7 +46,7 @@ steady-clock stamp and the voxel filter are our patch to
 
 ### Services
 
-`camera()` / `voa()` in `protocol.py` start and stop the systemd units
+`camera()` (the SDK's `lite3.depth`) and `voa()` (`protocol.py`) start and stop the systemd units
 directly via `sudo -n systemctl`, allowed for exactly those four commands by
 `env/sudoers-lite3-camera`. `env/voa_ros2-override.conf` binds voa to the
 camera: voa on brings the camera up; camera off takes voa down.
@@ -65,7 +65,7 @@ reason beside each constant.
 |---|---|---|
 | Leg odometry under-count | ×1.15 (1.712 m by odometry = 1.960 m by tape) | Jetson2Motion patch |
 | Turn coast after stop | 0.17 s (3.5–4.5° overshoot at 0.4 rad/s) | `TURN_COAST_S` |
-| CPU of our ROS nodes | Jetson2Motion publishes odometry, IMU, state, both sonars and the handheld at 160 Hz each. Taking every message in rclpy cost `sonar_range` 68% of a core and a bare `Lite3` 35–46%. With queues of 1 read at a fixed rate: `sonar_range` 14% (20 Hz), `Lite3` 35% at 50 Hz, 25% at 25 Hz, 20% at 15 Hz. An empty `spin_once(timeout_sec=0)` costs as much as a full one, hence `take_ready()` (2026-10-06, Nav2 and the panel running, machine at 3–10% idle) | `lite3.SPIN_HZ`, `CLOUD_HZ`, `sonar_range.RATE_HZ` |
+| CPU of our ROS nodes | Jetson2Motion publishes odometry, IMU, state, both sonars and the handheld at 160 Hz each. Taking every message in rclpy cost `sonar_range` 68% of a core and a bare `Lite3` 35–46%. With queues of 1 read at a fixed rate: `sonar_range` 14% (20 Hz), `Lite3` 35% at 50 Hz, 25% at 25 Hz, 20% at 15 Hz. An empty `spin_once(timeout_sec=0)` costs as much as a full one, hence `take_ready()` (2026-10-06, Nav2 and the panel running, machine at 3–10% idle) | `lite3.robot.SPIN_HZ`, `CLOUD_HZ` (the SDK), `sonar_range.RATE_HZ` |
 | Turn rate delivered | 0.7 × commanded, the same by odometry and gyro: 0.4→0.28, 0.8→0.56, 1.2→0.84, 1.6→1.12 rad/s. Starts ~0.25 s after the command, coasts 2°, 5°, 8°, 11° after the stop, body tilt under 2° throughout (2026-10-06, turning in place for 2 s each way) | `MAX_YAW_RATE`, `person.MAX_TURN` |
 | Stand-up odometry jump | ~1.3 m in one step | `nav_start()` settle check |
 | Toggle reaction time | ~25 ms; arming transition ~2 s | `ARM_GRACE` |

@@ -2,7 +2,8 @@
 # Source this before running anything that uses lite3.py.
 _env_dir=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
 export CYCLONEDDS_URI=file://$_env_dir/cyclone_dds.xml
-# Make `from robot.lite3 import Lite3` work from anywhere.
+# Make `from robot.stack import StackRobot` work from anywhere. The SDK (lite3) is installed
+# with pip, or added below if that failed (lite3_sdk_uia docs/setup.md).
 export PYTHONPATH="$(dirname "$_env_dir")${PYTHONPATH:+:$PYTHONPATH}"
 #   source ~/robot/env/lite3_env.sh && python3 my_behaviour.py
 #

@@ -23,16 +23,18 @@ from concurrent.futures import ThreadPoolExecutor
 
 import yaml
 from aiohttp import ClientSession, web, WSMsgType
+from lite3 import Lite3Error
+from lite3.camera import mjpeg_command
+from lite3.depth import sampled
+from lite3.state import BATTERY_REFUSE, BATTERY_WARN, LYING
 
 from . import protocol as P
-from .depth import sampled
 from . import mapmaker
 from . import places
-from .lite3 import BATTERY_REFUSE, BATTERY_WARN, LYING, Lite3
 from .nav import CANCELED, REPO, SUCCEEDED, clamp, status_text
-from .protocol import Lite3Error
 from .rviz import height
 from .sonar_range import FOV, SONARS
+from .stack import StackRobot
 
 PORT = 8080
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'hmi_static')
@@ -110,7 +112,7 @@ class FrontCamera(threading.Thread):
                 time.sleep(0.5)
                 continue
             proc = subprocess.Popen(
-                P.camera_mjpeg('-an', '-vf', 'scale=640:-2,fps=8', '-q:v', '7'),
+                mjpeg_command('-an', '-vf', 'scale=640:-2,fps=8', '-q:v', '7'),
                 stdout=subprocess.PIPE, stdin=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL)
             buf = b''
@@ -170,7 +172,7 @@ class Robot:
 
     def __init__(self, emit):
         self.emit = emit                        # emit(dict) -> all pages
-        self.bot = Lite3(estop_on_sigint=False)
+        self.bot = StackRobot(estop_on_sigint=False)
         self.bot.heartbeat_start()
         self.work = ThreadPoolExecutor(1)       # motion: one thing at a time
         self.talk_pool = ThreadPoolExecutor(1)  # talking runs beside motion

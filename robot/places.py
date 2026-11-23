@@ -15,7 +15,7 @@ import os
 import sys
 import tempfile
 
-from .protocol import Lite3Error
+from lite3 import Lite3Error
 
 ROOT = os.path.expanduser('~/lite3_maps')
 NAME_MAX = 60

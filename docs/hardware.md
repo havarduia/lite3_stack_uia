@@ -1,5 +1,8 @@
 # Hardware: the computers and how a command reaches the legs
 
+The stock robot alone is described in the SDK's `docs/robot.md`; this page
+adds what this project put around it (the Orin, Nav2, the panel).
+
 ## The hardware and the two computers
 
 The Lite3 Pro uses a "split brain": an RK3588 ARM motion host running the
@@ -14,8 +17,6 @@ for SLAM, navigation and vision
                         │  jy_exe      the vendor locomotion        │
                         │              controller. UDP :43893 in,   │
                         │              telemetry out to :43897      │
-                        │  track       person detector (YOLOv5s on  │
-                        │              the NPU). UDP :43901, JSON   │
                         │  front wide-angle camera → RTSP :8554     │
                         │  speaker (ES8388 codec), played by aplay  │
                         │  front + rear ultrasonic sensors          │
@@ -42,11 +43,10 @@ Where each sensor lives matters in the code:
 
 | Thing | Lives on | How our code reaches it |
 |---|---|---|
-| Walking, posture, tricks | motion (`jy_exe`) | UDP packets from `protocol.py`, or `/cmd_vel` via `transfer_ros2` |
+| Walking, posture, tricks | motion (`jy_exe`) | UDP packets from the SDK (`lite3.udp`), or `/cmd_vel` via `transfer_ros2` |
 | Robot state, battery, leg odometry, IMU, sonars | motion → republished on Jetson | ROS2 topics from `transfer_ros2` |
 | Depth camera (RealSense D435i) | Jetson, USB | ROS2 topic `/camera/depth/color/points` |
 | Front wide-angle camera | motion | RTSP stream, grabbed with `ffmpeg` |
-| Person detector | motion (NPU) | Not used: removed 2026-10-23 ([voice.md](voice.md)) |
 | Speaker | motion | `ssh` to the motion computer, run `aplay` |
 
 ## How a command reaches the legs
@@ -55,7 +55,7 @@ There are **two paths** into `jy_exe`, and the code uses both.
 
 ### Path A: "simple" UDP frames (posture, mode, heartbeat, tricks)
 
-`robot/protocol.py` sends 12-byte packets `<code:uint32, value:int32, 0>`
+The SDK's `lite3/udp.py` sends 12-byte packets `<code:uint32, value:int32, 0>`
 directly to `192.168.1.120:43893`. Examples:
 
 | Code | Meaning |
@@ -70,7 +70,7 @@ directly to `192.168.1.120:43893`. Examples:
 
 Some codes come from DEEP Robotics' official source, some from a community
 SDK, and several were captured from the handheld and phone app by us.
-`protocol.py` records which is which.
+`lite3.udp.SOURCES` records which is which (the SDK's `docs/robot.md`).
 
 ### Path B: ROS2 velocity (`/cmd_vel`)
 
@@ -102,7 +102,7 @@ the project: the terminal (Ctrl-C) becomes your stop button.
 
 Even with the heartbeat, a freshly powered robot is "settled but not armed":
 the **first real command is swallowed** by `jy_exe`'s own arming sequence.
-`stand()` detects this and re-sends the toggle (see [Posture: stand(), sit(), tilt(), action()](api.md#posture-stand-sit-tilt-action)). Measured
+`stand()` detects this and re-sends the toggle (the SDK's `docs/robot.md`). Measured
 2026-09-21: the heartbeat alone does not arm him, and neither do mode
 commands; he sits at 98 indefinitely until a real command arrives, so no
 amount of waiting after `heartbeat_start()` helps.

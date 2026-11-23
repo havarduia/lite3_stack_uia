@@ -1,9 +1,9 @@
 import os, signal, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from robot.lite3 import Lite3
+from robot.stack import StackRobot
 from robot.nav import dist, goal_ahead
 
-with Lite3() as bot:
+with StackRobot() as bot:
     print('battery %s%%  basic=%s' % (bot.state.get('battery'), bot.state.get('basic')))
     bot.stand()
     time.sleep(1.5)

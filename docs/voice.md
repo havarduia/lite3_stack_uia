@@ -1,8 +1,12 @@
 # Talking: the speaker and text-to-speech
 
-`robot/talk.py`, two layers. Nothing is sent online except `play_url`.
+`robot/voice.py`, two layers, on top of the SDK's speaker (`lite3.speaker`:
+built-in clips, sound files, the ssh + `aplay` pipe and the one volume,
+`lite3.speaker.VOLUME`). Nothing is sent online except `play_url`.
 
-## `Voice`: one sound at a time
+## `Talker`: one sound at a time
+
+`Talker` is the SDK's `Speaker` plus speech; `bot.say()` and `bot.play()` use it.
 
 The speaker is on the **motion computer**, so every sound is a pipeline
 ending in `ssh ysc@192.168.1.120 aplay`:
@@ -16,7 +20,7 @@ text ─► Kokoro TTS (on the Orin) ─► ffmpeg (to raw S16LE 48 kHz stereo, 
 - `say(text)`: Kokoro (neural TTS on the Orin's GPU, offline, voice
   `bm_george`), through `RemoteSpeaker` below. Orin's voice down, no speech:
   there is no fallback (the user's choice, 2026-11-09). `say(text, voice=...)`
-  still uses a Piper model on the Jetson.
+  still uses a Piper model on the perception computer (`PiperSpeaker`).
 - `play_file(path)`, `play_url(youtube_url)` (via `yt-dlp`).
 
 Details that were learned the hard way:
@@ -75,7 +79,7 @@ stream. The first sentence plays while the next is still being synthesised.
 `RemoteSpeaker` is the same with the sentences made by `tts_server.py`.
 It adds software gain with a limiter and sets the codec volume to max.
 
-CLI: `python3 -m robot.talk say "text"`, `... play OKstandup`,
+CLI: `python3 -m robot.voice say "text"`, `... play OKstandup`,
 `... file <path>`, `... url <link>`, `... clips`, `... voices`.
 
 Until 2026-10-23 a `Talker` here also chatted through Google Gemini, and

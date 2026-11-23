@@ -22,8 +22,8 @@ These are the ideas behind the code; useful if asked "why is it built like this?
    is normal operation.
 5. **Measure, don't guess.** Constants come from tape measures, camera checks
    and logs; the docs record the measurement and date.
-6. **Keep ROS optional where possible.** `protocol.py` and `talk.py` don't
-   import `rclpy`; `lite3.py` imports `talk` lazily.
+6. **Keep ROS optional where possible.** `protocol.py`, `voice.py` and the
+   SDK's `udp`, `speaker` and `camera` don't import `rclpy`; `lite3.Lite3` loads it only when used.
 7. **Change vendor code minimally, and keep the diff.** Every vendor change is
    a patch file in `env/` with the reasoning inside.
 
@@ -91,7 +91,7 @@ scripted-run wrapper nothing used) with it: `git show c4cfb84:archive/backups/RE
 | Term | Meaning |
 |---|---|
 | **jy_exe** | the vendor's closed-source locomotion controller on the motion computer |
-| **basic_state** | `jy_exe`'s posture/state number (6 = standing; see [State](api.md#state)) |
+| **basic_state** | `jy_exe`'s posture/state number (6 = standing; see `docs/robot.md` in the SDK) |
 | **heartbeat / interlock** | keepalive packet without which `jy_exe` ignores commands |
 | **transfer_ros2 / Jetson2Motion** | vendor bridge between the robot's UDP protocol and ROS2 |
 | **voa** | vendor "visual obstacle avoidance" node: corrects `/cmd_vel` → `/cmd_vel_corrected` |

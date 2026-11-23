@@ -31,7 +31,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from robot.nav import LETHAL, dist, goal_ahead, status_text
-from robot.protocol import Lite3Error
+from lite3 import Lite3Error
 from robot.voice import Talker
 
 DONE = 'That was my walk: %.1f metres.'
@@ -217,10 +217,10 @@ def main():
                          'camera cannot see that close either. Use >= 0.4.' % a.stop)
 
     voice = Talker()
-    from robot.lite3 import Lite3
+    from robot.stack import StackRobot
     # upright(): arm, stand, and on the way out sit FIRST; close() then
     # disarms SECOND.
-    with Lite3() as bot, bot.upright(heartbeat=a.heartbeat):
+    with StackRobot() as bot, bot.upright(heartbeat=a.heartbeat):
         track = Odometer(bot)
         try:
             if use_nav:

@@ -18,7 +18,8 @@ from sensor_msgs.msg import Range
 from std_msgs.msg import Float64
 from tf2_ros import StaticTransformBroadcaster
 
-from .lite3 import ODOM_TOPIC, take_ready
+from lite3.robot import take_ready
+from .stack import ODOM_TOPIC
 
 # name: (input topic, x in base_link, yaw, max range). A reading at or past
 # max goes out AS max, which the range layer reads as "nothing there". The

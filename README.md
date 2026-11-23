@@ -1,22 +1,25 @@
 # lite3-robot
 
-A Python API and a set of behaviours for a **DEEP Robotics Lite3 Pro**
-quadruped ("robot dog"). It runs on the robot's perception computer (Jetson
-Xavier NX, Ubuntu 20.04, ROS2 Foxy, Python 3.8).
+Navigation, maps, speech, a web panel and tools for a **DEEP Robotics Lite3
+Pro** quadruped ("robot dog"). It runs on the robot's perception computer
+(Xavier NX, Ubuntu 20.04, ROS2 Foxy, Python 3.8), on top of the robot SDK
+[lite3_sdk_uia](../lite3_sdk_uia) (`import lite3`), which does everything the
+stock robot can: posture, motion, state, depth camera, sonars, speaker.
 
 ```python
-from robot.lite3 import Lite3
+from robot.stack import StackRobot
 
-with Lite3() as bot:
+with StackRobot() as bot:
     bot.stand()
     bot.walk(1.0)              # stops by itself if the depth camera sees an obstacle
     bot.turn_deg(90)           # positive = left
     print(bot.scan_text())     # what the depth camera sees, as a bar chart
 ```
 
-On top of that API: Nav2 navigation (mapless, or on a floor map), speech
-through the robot's speaker, a scripted tour, keyboard
-teleop and a web control panel.
+`StackRobot` is the SDK's `Lite3` plus what this project added: lidar
+odometry from the Orin, Nav2 navigation (mapless, or on a floor map), named
+places, and his voice. On top of it: a scripted tour, keyboard teleop and a
+web control panel.
 
 ## The idea in one paragraph
 
@@ -24,7 +27,7 @@ The robot has two computers. The **motion computer** runs the vendor's
 closed controller (`jy_exe`) that balances and walks. The **perception
 computer** runs ROS2, the depth camera and this repository. Out of the box
 the robot ignores commands without saying why: wrong mode, lying down, low
-battery, not "armed". The `Lite3` class turns each of those silent failures
+battery, not "armed". The SDK's `Lite3` class turns each of those silent failures
 into an automatic fix or a clear `Lite3Error`. It keeps the robot's state
 as plain attributes (`bot.battery`, `bot.pose`, `bot.standing`). Every
 motion call blocks, checks safety every 50 ms and always ends with the robot
@@ -35,7 +38,7 @@ stopped, even after a crash or Ctrl-C.
 - **The handheld remote is the only hardware stop.** Keep it in your hand.
 - `bot.heartbeat_start()` makes your program the controller: the robot then
   obeys with **no handheld at all**, and your terminal (Ctrl-C) is the stop.
-- Ctrl-C in any `Lite3` program runs `estop()`, which also kills Nav2.
+- Ctrl-C in any `StackRobot` program runs `estop()`, which also kills Nav2.
 - `demos/shake.py`, `demos/estop_nav.py` and `demo.py ... --move` **move the robot**.
 
 ## Getting started
@@ -43,29 +46,35 @@ stopped, even after a crash or Ctrl-C.
 1. SSH to the perception computer: `ssh ysc@lite3-perception` (Tailscale),
    or `ssh -J ysc@192.168.2.1 ysc@192.168.1.103` from the robot's own wifi.
    The repository is in `~/robot` there.
-2. Set up the shell. Do this in every new shell:
+2. The SDK must be installed there once (`~/lite3_sdk`, its `docs/setup.md`):
+
+   ```bash
+   pip3 install --user --no-build-isolation -e ~/lite3_sdk
+   ```
+
+3. Set up the shell. Do this in every new shell:
 
    ```bash
    source ~/robot/env/lite3_env.sh
    ```
 
-3. Look, without moving anything:
+4. Look, without moving anything:
 
    ```bash
-   python3 -m robot.lite3 status        # one line: battery, posture, pose, Nav2, sonars
-   python3 -m robot.lite3 scan          # the depth camera as a bar chart
+   python3 -m robot.stack status        # one line: battery, posture, pose, Nav2, sonars
+   python3 -m robot.stack scan          # the depth camera as a bar chart
    python3 demos/demo.py read           # the API tour, the lessons that do not move
    ```
 
-4. Move, with the handheld in your hand and space around the robot:
+5. Move, with the handheld in your hand and space around the robot:
 
    ```bash
-   python3 -m robot.lite3 stand
-   python3 -m robot.lite3 walk 0.5
-   python3 -m robot.lite3 sit
+   python3 -m robot.stack stand
+   python3 -m robot.stack walk 0.5
+   python3 -m robot.stack sit
    ```
 
-5. Open the web panel at `http://lite3-perception:8080` (Tailscale) or
+6. Open the web panel at `http://lite3-perception:8080` (Tailscale) or
    `http://192.168.2.1:8080` (the robot's wifi), and log in with the password
    in `~/.lite3_panel_password` on the perception computer. The panel runs as
    `hmi.service`. Only one program may hold the robot: stop the panel
@@ -74,9 +83,10 @@ stopped, even after a crash or Ctrl-C.
 Your first program:
 
 ```python
-from robot.lite3 import Lite3, Lite3Error
+from lite3 import Lite3Error
+from robot.stack import StackRobot
 
-with Lite3() as bot:
+with StackRobot() as bot:
     bot.heartbeat_start()        # only if no handheld is on - YOU are now the stop
     bot.wait_ready()
     bot.stand()
@@ -89,15 +99,18 @@ with Lite3() as bot:
         bot.sit()
 ```
 
-Before and after a change to the motion code, run `python3 demos/check_motion.py`.
-It tests the motion loop against a fake robot, so it runs anywhere.
+Before and after a change to `robot/stack.py`, `nav.py` or `maps.py`, run
+`python3 demos/check_motion.py` (and `demos/check_voice.py` for the voice).
+They test against the SDK's fake robot, so they run anywhere. The motion loop
+itself is the SDK's, with its own checks in `lite3_sdk_uia/tests/`.
 
 ## Where to read next
 
 | To... | Read |
 |---|---|
 | understand the computers, the network ports and the arming interlock | [docs/hardware.md](docs/hardware.md) |
-| use the `Lite3` API: state, posture, motion, e-stop, depth camera, sonars | [docs/api.md](docs/api.md) |
+| use the robot itself: state, posture, motion, e-stop, depth camera, speaker | the SDK's `docs/api.md` and `docs/robot.md` |
+| see what `StackRobot` adds, and the sonars for Nav2 | [docs/api.md](docs/api.md) |
 | navigate with Nav2, mapless or on a floor map, and save places | [docs/navigation.md](docs/navigation.md) |
 | make the robot talk | [docs/voice.md](docs/voice.md) |
 | run or change the web panel, cameras and wifi networking | [docs/panel.md](docs/panel.md) |
@@ -115,13 +128,13 @@ Lab notes and old plans are in [docs/history/](docs/history/README.md).
 ## Repository layout
 
 ```
-robot/                 the library: `from robot.lite3 import Lite3`
-  lite3.py             THE API: state, heartbeat, posture, tricks, motion, e-stop
-  nav.py               Nav2 start/stop, costmap, goto(), floor maps, places   (part of Lite3)
-  depth.py             point cloud -> obstacle ranges                          (part of Lite3)
-  protocol.py          every UDP code and address; no ROS; also a raw-code CLI
+robot/                 the library: `from robot.stack import StackRobot`
+  stack.py             StackRobot: the SDK's Lite3 + Nav, Maps, Voice; its CLI
+  nav.py               Nav2 start/stop, costmap, goto(), the turn sweep check (part of StackRobot)
+  maps.py              floor maps, where he is on one, places, go_to()         (part of StackRobot)
+  voice.py             text-to-speech (Kokoro on the Orin) through the SDK's speaker (part of StackRobot)
+  protocol.py          the stack's addresses, the panel password; no ROS; also a raw-code CLI
   sonar_range.py       ROS node: sonars -> sensor_msgs/Range for Nav2
-  talk.py              speaker: built-in clips, text-to-speech (Kokoro on the Orin, offline)
   hmi.py               web control panel server; the page is in hmi_static/
   rs_stream.py         RealSense colour -> H.264 video          (started by hmi.py)
   udp_relay.py         WebRTC video to the panel                 (started by hmi.py)
@@ -143,7 +156,8 @@ bin/                   things you run
   locate_replay.py     localize a recorded walk on another walk's map, offline
 demos/                 teaching and regression scripts
   demo.py              the API in 10 lessons
-  check_motion.py      the motion loop against a fake robot        (no robot needed)
+  check_motion.py      StackRobot, Nav2 and maps against a fake robot (no robot needed)
+  check_voice.py       the voice on the SDK's speaker              (no robot needed)
   check_map.py         one live lidar scan drawn on a floor map
   shake.py             end-to-end regression test                  (MOVES THE ROBOT)
   estop_nav.py         proves e-stop works under Nav2              (MOVES THE ROBOT)
@@ -159,7 +173,7 @@ urdf/                  the Lite3 model and meshes for rviz and the panel
 docs/                  the documentation; docs/history/ has lab notes
 ```
 
-`robot/__init__.py` re-exports nothing on purpose: `robot.talk` and
+`robot/__init__.py` re-exports nothing on purpose: `robot.voice` and
 `robot.protocol` must import without `rclpy`.
 
 ## Things that will bite you

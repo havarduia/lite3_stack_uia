@@ -19,31 +19,32 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from robot.lite3 import Lite3, Lite3Error
+from lite3 import Lite3Error
+from robot.stack import StackRobot
 from robot.nav import LETHAL, goal_ahead, status_text
 
 
 # ---------------------------------------------------------------- lesson 1
 def lesson1_connect():
     """Connecting. The object is the robot; the context manager is the safety net."""
-    # Lite3() spins a ROS node in a background thread and, by default, puts the
+    # StackRobot() spins a ROS node in a background thread and, by default, puts the
     # robot in auto mode (without which /cmd_vel is silently ignored).
     # Using it as a context manager guarantees a zero-Twist stop on the way out,
     # whether you return normally, raise, or press Ctrl-C.
-    with Lite3() as bot:
+    with StackRobot() as bot:
         print('connected.')
         print('  one-line summary :', bot.status())
 
     # Pass auto_mode=False if a human is driving with the handheld and you only
     # want to observe - taking auto mode would steal control from them.
-    with Lite3(auto_mode=False) as bot:
+    with StackRobot(auto_mode=False) as bot:
         print('  observer mode, battery:', bot.battery, '%')
 
 
 # ---------------------------------------------------------------- lesson 2
 def lesson2_state():
     """State is live attributes, not callbacks. No spin loop in your code."""
-    with Lite3(auto_mode=False) as bot:
+    with StackRobot(auto_mode=False) as bot:
         # These update continuously in the background. Just read them.
         print('  battery  :', bot.battery, '%')
         print('  standing :', bot.standing)
@@ -66,7 +67,7 @@ def lesson2_state():
 # ---------------------------------------------------------------- lesson 3
 def lesson3_perception():
     """Seeing. The depth camera is pitched 20 degrees down - the API handles it."""
-    with Lite3(auto_mode=False) as bot:
+    with StackRobot(auto_mode=False) as bot:
         # scan() returns [(bearing_deg, range_m or None), ...], +ve bearing = LEFT.
         rows = bot.scan()
         print('  %d bearing bins' % len(rows))
@@ -90,7 +91,7 @@ def lesson3_perception():
 # ---------------------------------------------------------------- lesson 4
 def lesson4_guards():
     """The API refuses unsafe things. Learn the refusals - they are the docs."""
-    with Lite3(auto_mode=False) as bot:
+    with StackRobot(auto_mode=False) as bot:
         attempts = [
             ('walk while lying down', lambda: bot.walk(0.3)),
             ('navigate while lying down', lambda: bot.goto(1.0)),
@@ -116,7 +117,7 @@ def lesson4_guards():
 # ---------------------------------------------------------------- lesson 5
 def lesson5_posture():
     """Standing and sitting. Both are idempotent, unlike the raw toggle."""
-    with Lite3() as bot:
+    with StackRobot() as bot:
         print('  before:', bot.status())
         bot.stand()          # no-op if already standing
         print('  standing:', bot.standing)
@@ -132,7 +133,7 @@ def lesson5_posture():
 # ---------------------------------------------------------------- lesson 6
 def lesson6_motion():
     """Walking and turning. Blocking calls that always leave a zero Twist."""
-    with Lite3() as bot:
+    with StackRobot() as bot:
         bot.stand()
         if bot.clearance() < 1.2:
             print('  not enough room ahead (%.2f m) - skipping' % bot.clearance())
@@ -154,7 +155,7 @@ def lesson6_motion():
 # ---------------------------------------------------------------- lesson 7
 def lesson7_navigation():
     """Nav2: goal-directed movement that routes AROUND obstacles."""
-    with Lite3() as bot:
+    with StackRobot() as bot:
         bot.stand()
         time.sleep(1.5)              # let the pose settle before the costmap builds
 
@@ -189,7 +190,7 @@ def lesson7_navigation():
 # ---------------------------------------------------------------- lesson 8
 def lesson8_estop():
     """Stopping. Ctrl-C is wired to a real emergency stop."""
-    with Lite3(auto_mode=False) as bot:
+    with StackRobot(auto_mode=False) as bot:
         print("""
   Ctrl-C during any API call runs estop(), which:
     1. ignores further SIGINT, so a second Ctrl-C cannot abort the stop
@@ -208,14 +209,14 @@ def lesson8_estop():
         # which the robot ignores every network command. Strongest stop there
         # is, but untested while standing - so it is opt-in, not the default.
 
-        # Opt out of the signal handler with Lite3(estop_on_sigint=False) if
+        # Opt out of the signal handler with StackRobot(estop_on_sigint=False) if
         # your program needs its own Ctrl-C behaviour.
 
 
 # ---------------------------------------------------------------- lesson 9
 def lesson9_behaviour():
     """Putting it together: a tiny behaviour - creep forward while it is clear."""
-    with Lite3() as bot:
+    with StackRobot() as bot:
         bot.stand()
         travelled = 0.0
         while travelled < 1.2:
@@ -238,7 +239,7 @@ def lesson9_behaviour():
 # --------------------------------------------------------------- lesson 10
 def lesson10_no_controller():
     """Running with no handheld: hold the interlock from your own script."""
-    with Lite3() as bot:
+    with StackRobot() as bot:
         # jy_exe only accepts commands while a controller keepalive keeps
         # arriving. Normally that is the handheld. heartbeat_start() makes this
         # process the controller instead, so the robot obeys with no handheld

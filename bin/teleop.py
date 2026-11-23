@@ -22,7 +22,8 @@ import time
 import tty
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from robot.lite3 import Lite3, MAX_SPEED, MAX_YAW_RATE  # noqa: E402
+from lite3.motion import MAX_SPEED, MAX_YAW_RATE  # noqa: E402
+from robot.stack import StackRobot  # noqa: E402
 
 HOLD = 0.5          # s without a keypress before he stops
 STEER_LIMIT = 29.0  # s, under lite3's 30 s ceiling
@@ -81,9 +82,9 @@ def main():
 
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
-    # with Lite3: close() is the final halt, the disarm and the ordered rclpy
+    # with StackRobot: close() is the final halt, the disarm and the ordered rclpy
     # teardown, on every way out.
-    with Lite3() as bot, bot.upright(heartbeat=not args.handheld):
+    with StackRobot() as bot, bot.upright(heartbeat=not args.handheld):
         try:
             print('w/s drive  a/d turn  space stop  +/- speed  q quit')
             tty.setcbreak(fd)

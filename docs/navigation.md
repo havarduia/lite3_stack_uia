@@ -239,7 +239,7 @@ bot.go_to_point(1.9, -0.3)      # a point on the map
 bot.places(); bot.rename_place(old, new); bot.delete_place(name)
 ```
 
-The same from the command line: `python3 -m robot.lite3 floors`,
+The same from the command line: `python3 -m robot.stack floors`,
 `load lab`, `here -0.2 0 0`, `save "lab door"`, `places`, `go "lab door"`,
 `go 1.9 -0.3`, `forget "lab door"`.
 

@@ -1,7 +1,7 @@
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from robot.lite3 import Lite3
+from robot.stack import StackRobot
 from robot.nav import goal_ahead, status_text
 
 results = []
@@ -16,7 +16,7 @@ def step(name, fn):
         print('[FAIL] %-16s %s' % (name, e))
         return None
 
-with Lite3() as bot:
+with StackRobot() as bot:
     print('start:', bot.status())
     try:
         # No handheld: this process holds the interlock instead. SAFETY - that

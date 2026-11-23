@@ -1,14 +1,9 @@
-"""protocol - the Lite3's UDP codes and addresses, in one place. No ROS.
+"""protocol - the stack's addresses and the panel's password, in one place. No ROS.
 
-Every raw packet the package sends goes through here, so an address or a code
-changes in one file. Import it from anything, including ROS-free scripts:
-
-    from robot import protocol as P
-    P.send(P.MODE_AUTO)
-
-Or send one raw code from the shell - no ROS, and NO checks: stand_toggle
-lies him down if he is already standing, and nothing checks posture before a
-trick. Use Lite3 for anything but debugging and capturing unknown codes.
+The robot's own codes, addresses and send() are the SDK's (lite3.udp); the
+names the stack used from here are passed through. Send one raw code from the
+shell - no ROS, and NO checks: stand_toggle lies him down if he is already
+standing, and nothing checks posture before a trick:
 
     python3 -m robot.protocol stand_toggle
     python3 -m robot.protocol hello            # a name from ACTIONS
@@ -16,28 +11,20 @@ trick. Use Lite3 for anything but debugging and capturing unknown codes.
     python3 -m robot.protocol stick_pitch -16000
     python3 -m robot.protocol camera [on|off]   # depth camera service only
     python3 -m robot.protocol voa [on|off]      # voa (brings the camera too)
-
-Codes marked OFFICIAL are in DeepRoboticsLab source; COMMUNITY ones come from
-infodriver/lite3-sdk and have not been run on this robot. The rest were
-captured from the handheld or phone app here.
 """
 import hashlib
 import hmac
 import os
 import secrets
-import socket
-import struct
-import subprocess
 
-from lite3 import Lite3Error  # noqa: F401  (one error class for the SDK and the stack)
+from lite3 import udp
+from lite3.depth import camera, service
+from lite3.udp import ACTIONS, MOTION_ADDR, MOTION_IP, send  # noqa: F401
 
-MOTION_IP = '192.168.1.120'          # 192.168.2.1 on the robot's own wifi
 AP_IP = '192.168.2.1'                # the motion computer on its own wifi (wifi_mode.sh)
 ORIN_IP = '192.168.1.5'              # the Orin: lidar, its Nav2, his voice (tts_server.py)
-MOTION_ADDR = (MOTION_IP, 43893)     # jy_exe: every motion command
 # jetson2app on THIS (perception) computer: the app/handheld AI switch
 # APP_ADDR = ('127.0.0.1', 43899)
-CAMERA_URL = 'rtsp://%s:8554/test' % MOTION_IP
 # The same mediamtx also serves that stream as WebRTC: signalling (WHEP) over
 # HTTP, then all the video over one UDP port.
 CAMERA_WHEP = 'http://%s:8889/test/whep' % MOTION_IP
@@ -69,92 +56,22 @@ def panel_password_ok(given):
 
 
 
-# --- motion port, simple frames <code, value, 0> ----------------------------
-STAND_TOGGLE = 0x21010202   # stand <-> lie, a TOGGLE
-MODE_AUTO = 0x21010C03      # needed before any velocity
-MODE_MANUAL = 0x21010C02    # the handheld sends this when a stick moves
-ZERO = 0x31010C05           # reset joints to zero / init pose
-HEARTBEAT = 0x21040001      # handheld keepalive, >= 2 Hz
-# Posture ("twist body") mode: the sticks set the body attitude,
-# -32767..32767 at 10 Hz. NEGATIVE pitch is NOSE UP, full scale ~14 deg.
-POSTURE_ENTER, POSTURE_EXIT = 0x21010D05, 0x21010D06
-STICK_PITCH = 0x21010130
-# STICK_ROLL = 0x21010131
-
-# Built-in tricks: name -> (code, posture it starts from). Only dance is
-# verified on this robot; backflip (0x21010502) is left out on purpose.
-ACTIONS = {
-    'hello':      (0x21010506, 'lie'),
-    'dance':      (0x2101030C, 'stand'),
-    'twist':      (0x21010204, 'stand'),
-    'twist_jump': (0x2101020D, 'stand'),
-    'long_jump':  (0x2101050B, 'lie'),     # manual: needs 2 m clear ahead
-    'turn_over':  (0x21010205, 'lie'),     # rolls onto its back
-}
-
-# Known but unused, kept so nobody has to dig them up again:
-#   0x21010C0B  stop/brake, value 0 then 1                       COMMUNITY
-#   0x21010300 / 0x21010307 / 0x21010406  gait OR body height - sources
-#       disagree, capture from the handheld before use
-#   0x21010303  fast gait; 0x21010402 body up; 0x21010201 stance   COMMUNITY
-#   0x0111 / 0x0113 / 0x0114  low-level joint control - BYPASSES the stock
-#       controller, loses control after 5 ms without a 0x0111 frame  OFFICIAL
-#   telemetry to UDP 43897: 0x0901 robot state, 0x0902 joints, 0x0905
-#       handheld sticks. transfer_ros2 owns that port and republishes it.
-
 # --- app port (APP_ADDR): the app's AI switch, no longer used ---
 # AI_SERVICES = 0x21012109    # value 0x40 start, 0x00 stop
 # AI_QUERY = 0x2101210D       # reply: same code, value 0x11 up / 0x10 down
 # CAMERA_ON, CAMERA_OFF = 0x40, 0x00
 
-def send(code, value=0):
-    """One simple frame to jy_exe. value is signed (stick axes go negative)."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.sendto(struct.pack('<IiI', code, int(value), 0), MOTION_ADDR)
-    finally:
-        s.close()
-
-
-def camera_mjpeg(*args, url=CAMERA_URL):
-    """ffmpeg command line: the front camera as JPEGs on stdout. args are the
-    output options (-vf, -q:v, ...)."""
-    return ['ffmpeg', '-loglevel', 'error', '-rtsp_transport', 'tcp',
-            '-i', url, *args, '-f', 'mjpeg', '-']
-
-
-def _service(unit, on):
-    """Start (True) or stop (False) a systemd unit, or just look (None);
-    returns whether it is active afterwards. Passwordless only for the exact
-    commands in env/sudoers-lite3-camera."""
-    if on is not None:
-        r = subprocess.run(['sudo', '-n', '/usr/bin/systemctl',
-                            'start' if on else 'stop', unit],
-                           stderr=subprocess.PIPE, universal_newlines=True)
-        if r.returncode:
-            raise Lite3Error('systemctl %s %s failed (%s) - is '
-                             'env/sudoers-lite3-camera installed?'
-                             % ('start' if on else 'stop', unit, r.stderr.strip()))
-    return subprocess.run(['systemctl', 'is-active', '--quiet', unit]).returncode == 0
-
-
-def camera(on=None):
-    """The depth camera service on its own. Active is not streaming: the
-    node takes a few seconds, so judge it by frames (Lite3.wait_cloud)."""
-    return _service('realsense_ros2.service', on)
-
-
 def voa(on=None):
     """voa_ros2. Its drop-in (env/voa_ros2-override.conf) binds it to the
     camera: starting voa starts the camera, stopping the camera stops voa."""
-    return _service('voa_ros2.service', on)
+    return service('voa_ros2.service', on)
 
 
 def lookup(name):
-    """A code constant here (any case), an ACTIONS name, or a number."""
+    """A code constant in lite3.udp (any case), an ACTIONS name, or a number."""
     if name.lower() in ACTIONS:
         return ACTIONS[name.lower()][0]
-    code = globals().get(name.upper())
+    code = getattr(udp, name.upper(), None)
     return code if isinstance(code, int) else int(name, 0)
 
 

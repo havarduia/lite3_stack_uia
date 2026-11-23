@@ -27,7 +27,7 @@ import yaml
 from . import places
 from .lio_relay import CLOUD_FIX_TOPIC, FIX_NO_MAP as CLOUD_NO_MAP, FIX_OK as CLOUD_OK, \
     FIX_REFUSED as CLOUD_REFUSED, inv, join, wrap
-from .protocol import Lite3Error
+from lite3 import Lite3Error
 
 TOPIC = '/localized'
 SCAN_TOPIC = '/scan_walls'      # the lidar cut above the furniture: the low /scan is mostly tables and chairs
@@ -229,7 +229,8 @@ def main(floor):
     from sensor_msgs.msg import LaserScan
     from std_msgs.msg import Float64MultiArray
 
-    from .lite3 import ODOM_TOPIC, take_ready
+    from lite3.robot import take_ready
+    from .stack import ODOM_TOPIC
     from .lio_relay import yaw_of
 
     floor_map = Map(os.path.join(places.floor_dir(floor), 'map.yaml'))
@@ -299,7 +300,8 @@ def main_cloud():
     from rclpy.executors import SingleThreadedExecutor
     from std_msgs.msg import Float64MultiArray
 
-    from .lite3 import ODOM_TOPIC, take_ready
+    from lite3.robot import take_ready
+    from .stack import ODOM_TOPIC
     from .lio_relay import yaw_of
 
     rclpy.init()

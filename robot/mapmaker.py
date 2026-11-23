@@ -25,7 +25,7 @@ import urllib.request
 
 from . import places
 from .lio_relay import MOUNT_XYZ, ORIN_PANEL, live
-from .protocol import Lite3Error
+from lite3 import Lite3Error
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NAME = re.compile(r'^[A-Za-z0-9_-]{1,40}$')     # the Orin keeps only these in a run's name

@@ -91,7 +91,8 @@ def main(drive=False):
     from rclpy.qos import qos_profile_sensor_data
     from std_msgs.msg import Float64MultiArray
 
-    from .lite3 import ODOM_TOPIC, take_ready      # imports rclpy: not for check()
+    from lite3.robot import take_ready      # imports rclpy: not for check()
+    from .stack import ODOM_TOPIC
 
     rclpy.init()
     node = rclpy.create_node('shadow_link')
