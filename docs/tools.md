@@ -48,7 +48,7 @@ debugging and capturing unknown codes only.
 
 ## `robot/rviz.py`: the live robot in rviz2 on the laptop
 
-    python3 -m robot.rviz                # on the laptop, in ~/lite3_api: the model only
+    python3 -m robot.rviz                # on the laptop, in your clone of this repository: the model only
     python3 -m robot.rviz sensors        # plus depth cloud, sonars, costmaps, Nav2 path, goal
     python3 -m robot.rviz nav            # the floor map view (env/lite3_nav.rviz), goals from rviz
     python3 -m robot.rviz /some/topic    # plus any topics you name

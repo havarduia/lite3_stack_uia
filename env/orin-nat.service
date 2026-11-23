@@ -5,7 +5,7 @@
 # leaves the motion computer's one radio to the AP, on 5 GHz ch 36 (docs/panel.md, "The robot's internet").
 # Forward rules go in DOCKER-USER: Docker owns FORWARD (policy DROP) and leaves that chain alone.
 [Unit]
-Description=NAT the robot's switch (192.168.1.0/24) out over the campus Wi-Fi (lite3_api docs/panel.md)
+Description=NAT the robot's switch (192.168.1.0/24) out over the campus Wi-Fi (lite3_stack_uia docs/panel.md)
 After=network-online.target docker.service
 Wants=network-online.target
 

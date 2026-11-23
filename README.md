@@ -3,7 +3,7 @@
 Navigation, maps, speech, a web panel and tools for a **DEEP Robotics Lite3
 Pro** quadruped ("robot dog"). It runs on the robot's perception computer
 (Xavier NX, Ubuntu 20.04, ROS2 Foxy, Python 3.8), on top of the robot SDK
-[lite3_sdk_uia](../lite3_sdk_uia) (`import lite3`), which does everything the
+[lite3_sdk_uia](https://github.com/havarduia/lite3_sdk_uia) (`import lite3`), which does everything the
 stock robot can: posture, motion, state, depth camera, sonars, speaker.
 
 ```python
