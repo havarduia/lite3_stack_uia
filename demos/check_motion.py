@@ -5,8 +5,8 @@
 
 A fake node, a fake clock and a pretend Nav2 stand in for the robot, and no
 packet or ROS message leaves this process, so it is safe to run anywhere -
-next to a live robot too. Run it after touching Lite3._loop, _run, steer,
-walk, turn, goto, go_to or nav_stop.
+next to a live robot too. Run it after touching robot/stack.py, nav.py or
+maps.py. The SDK's own checks are in lite3_sdk_uia/tests/.
 """
 import math
 import os
@@ -20,43 +20,19 @@ import rclpy.action
 from builtin_interfaces.msg import Time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from robot import lite3 as L, locate, nav, places, protocol as P  # noqa: E402
+from lite3 import Lite3, Lite3Error, motion as M, testing as T  # noqa: E402
+from robot import locate, maps, nav, places  # noqa: E402
+from robot.stack import ODOM_TOPIC, StackNode, StackRobot  # noqa: E402
 
-P.send = lambda code, value=0: None         # mode packets stay here
 
-
-class World:
-    """Stands in for Lite3._node: a pose that follows the last Twist exactly,
-    on a clock that only sleep() moves. at=(seconds, fn(world)) is something
-    that happens on the way."""
-    state = {'basic': L.STANDING, 'battery': 80}
-    cloud, tilt, stick_time, at = None, (0.0, 0.0), -1.0, None
-    odom_time = property(lambda self: self.odom_stopped or self.t)     # fresh until it stops
-    odom_stopped = None
-    # Map mode: the global costmap, and what robot/locate.py last said (with the
-    # odometry of that moment). None of it in mapless mode.
+class World(T.World):
+    """The SDK's fake robot, plus what the stack listens to: Nav2's costmaps and
+    what robot/locate.py last said (with the odometry of that moment). None of
+    it in mapless mode."""
     grid = loc = loc_stopped = None
     local_grid = None           # Nav2's local costmap, in odom: what a turn on the spot checks first
     loc_odom = (0.0, 0.0, 0.0)
     loc_time = property(lambda self: self.t if self.loc_stopped is None else self.loc_stopped)
-
-    def __init__(self, **setup):
-        self.t, self.odom, self.cmd, self.sent, self.pub = 0.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), [], self
-        vars(self).update(setup)
-
-    def publish(self, twist):
-        self.cmd = (twist.linear.x, twist.linear.y, twist.angular.z)
-        self.sent.append(self.cmd)
-
-    def sleep(self, dt):
-        (x, y, yaw), (vx, vy, wz) = self.odom, self.cmd
-        self.odom = (x + (vx * math.cos(yaw) - vy * math.sin(yaw)) * dt,
-                     y + (vx * math.sin(yaw) + vy * math.cos(yaw)) * dt,
-                     math.atan2(math.sin(yaw + wz * dt), math.cos(yaw + wz * dt)))
-        self.t += dt
-        if self.at and self.t >= self.at[0]:
-            happen, self.at = self.at[1], None
-            happen(self)
 
     def get_clock(self):
         return types.SimpleNamespace(now=lambda: types.SimpleNamespace(to_msg=Time))
@@ -72,25 +48,15 @@ class World:
         return types.SimpleNamespace(wait_for_service=lambda timeout_sec: True, call_async=call)
 
 
-class Bot(L.Lite3):
+class Bot(StackRobot):
     nav_running = True                      # no pgrep: the pretend Nav2 below is always up
     floor = 'lab'                           # nor for the floor that is loaded
 
 
-def run(move, **setup):
+def run(move, bot=Bot, **setup):
     """move(bot) on a fresh fake robot -> (its result or exception, was he left
     halted, every Twist sent)."""
-    w, bot = World(**setup), Bot.__new__(Bot)
-    w.bot, bot._node, bot._nav_client, bot._goal_handle = bot, w, None, None
-    real = time.monotonic, time.sleep       # the motion code times everything on the monotonic clock
-    time.monotonic, time.sleep = (lambda: w.t), w.sleep
-    try:
-        r = move(bot)
-    except Exception as e:
-        r = e
-    finally:
-        time.monotonic, time.sleep = real
-    return r, set(w.sent[-20:]) == {(0.0, 0.0, 0.0)}, w.sent
+    return T.run(move, bot, World, **setup)
 
 
 GOALS, CANCELS = [], []      # every goal pose the pretend Nav2 was sent, and when one was cancelled
@@ -195,7 +161,46 @@ def sent_goal():
             round(math.degrees(2 * math.atan2(g.pose.orientation.z, g.pose.orientation.w))))
 
 
+def check_stack():
+    """What StackRobot adds to the SDK's Lite3."""
+    assert StackRobot.node_class is StackNode and ODOM_TOPIC == 'odom_fused'
+    seen, real = {}, Lite3.__init__
+    Lite3.__init__ = lambda self, **kw: seen.update(kw)
+    try:
+        StackRobot()
+    finally:
+        Lite3.__init__ = real
+    assert seen.get('odom_topic') == 'odom_fused', seen          # lidar odometry, not the SDK's leg odometry
+
+    # the stack's estop also stops Nav2: it is another process publishing its own velocities
+    stopped = []
+
+    class Stopping(Bot):
+        def nav_stop(self, timeout=8.0):
+            stopped.append(timeout)
+    r, halted, _ = run(lambda b: b.estop(), Stopping)
+    assert r is True and stopped and halted, (r, stopped)
+    del stopped[:]
+
+    def ctrl_c(b):
+        try:
+            b._on_sigint(2, None)
+        except KeyboardInterrupt:
+            return 'interrupted'
+    r, halted, _ = run(ctrl_c, Stopping)
+    assert r == 'interrupted' and stopped and halted, (r, stopped)    # Ctrl-C reaches the stack's estop
+
+    # close() asks destroy_clients() for the Nav2 action clients, while the node still lives
+    gone = []
+    bot = Bot.__new__(Bot)
+    bot._nav_client = types.SimpleNamespace(destroy=lambda: gone.append('nav'))
+    bot._plan_client = types.SimpleNamespace(destroy=lambda: gone.append('plan'))
+    bot.destroy_clients()
+    assert gone == ['nav', 'plan'] and bot._nav_client is None and bot._plan_client is None, gone
+
+
 def main():
+    check_stack()
     # every way out of a motion call leaves him stopped, and says why
     r, halted, _ = run(lambda b: b.walk(0.5, stop_distance=None))
     assert r['reason'] == 'target reached' and 0.5 <= r['moved'] < 0.55 and halted, r
@@ -216,9 +221,9 @@ def main():
     assert nav.sweep_hit(beside, (0.0, 0.0, 0.0), math.radians(-90)) is not None
     r, halted, sent = run(lambda b: b.steer(lambda: (9.0, -9.0), limit=1.0))
     assert r['reason'] == 'time limit' and halted, r
-    assert sent[0] == (L.MAX_SPEED, 0.0, -L.MAX_YAW_RATE), sent[0]
+    assert sent[0] == (M.MAX_SPEED, 0.0, -M.MAX_YAW_RATE), sent[0]
     r, halted, _ = run(lambda b: b.steer(lambda: (0.1, 0.0), limit=999))    # HARD_TIMEOUT caps it
-    assert r['reason'] == 'time limit' and r['moved'] < 0.1 * (L.HARD_TIMEOUT + 1) and halted, r
+    assert r['reason'] == 'time limit' and r['moved'] < 0.1 * (M.HARD_TIMEOUT + 1) and halted, r
     r, halted, _ = run(lambda b: b.steer(lambda: 'seen enough'))
     assert r['reason'] == 'seen enough' and halted, r
     r, halted, _ = run(lambda b: b.steer(boom))                  # a crash still ends stopped
@@ -226,19 +231,19 @@ def main():
     r, halted, _ = run(lambda b: b.steer(lambda: (0.2, 0.0)), at=(2.0, lambda w: setattr(w, 'stick_time', w.t)))
     assert r['reason'].startswith('handheld took over') and halted, r
     r, _, sent = run(lambda b: b.walk(0.5, stop_distance=None), state={'basic': 1, 'battery': 80})
-    assert isinstance(r, L.Lite3Error) and not sent, r           # lying: refused, nothing sent
+    assert isinstance(r, Lite3Error) and not sent, r           # lying: refused, nothing sent
     r, _, sent = run(lambda b: b.steer(lambda: (float('nan'), float('nan')), limit=1.0))
     assert set(sent) == {(0.0, 0.0, 0.0)}, sent[0]               # a NaN is a stop, not full speed
     for bad in (lambda b: b.strafe(0.5, speed=0), lambda b: b.strafe(0.5, speed=9), lambda b: b.turn(1.0, rate=0)):
         r, _, sent = run(bad)
-        assert isinstance(r, L.Lite3Error) and not sent, r       # refused, not a ZeroDivisionError
+        assert isinstance(r, Lite3Error) and not sent, r       # refused, not a ZeroDivisionError
 
     # the odometry relay dies mid-walk: he stops, he does not walk on blind
     r, halted, _ = run(lambda b: b.walk(5.0, speed=0.5, stop_distance=None),
                        at=(1.0, lambda w: setattr(w, 'odom_stopped', w.t)))
     assert r['reason'].startswith('odometry stopped') and halted and r['moved'] < 1.5, r
     r, _, sent = run(lambda b: b.walk(1.0, stop_distance=None), odom_stopped=-10.0)
-    assert isinstance(r, L.Lite3Error) and not sent, r           # and does not set off without it
+    assert isinstance(r, Lite3Error) and not sent, r           # and does not set off without it
 
     # a depth guard reads the cloud at 4 Hz however often the loop asks, and still stops him
     reads = []
@@ -248,7 +253,7 @@ def main():
     assert all(b - a >= 0.25 - 1e-9 for a, b in zip(reads[1:], reads[2:])), reads    # reads[0] is the pre-flight
     # a camera that stopped sending: its last picture is not "clear", he does not set off on it
     r, _, sent = run(lambda b: b.walk(1.0), cloud=object(), cloud_time=-5.0)
-    assert isinstance(r, L.Lite3Error) and 'point cloud' in str(r) and not sent, r
+    assert isinstance(r, Lite3Error) and 'point cloud' in str(r) and not sent, r
     # Cancel (and so E-STOP) from another thread ends any motion, not only a Nav2 goal
     r, halted, _ = run(lambda b: b.walk(5.0, stop_distance=None), at=(1.0, lambda w: w.bot.goto_cancel()))
     assert r['reason'].startswith('cancelled') and halted and r['moved'] < 0.5, r
@@ -276,7 +281,7 @@ def main():
     r, halted, _ = run(lambda b: b.goto(1.0, check=False), at=(1.0, lambda w: setattr(w.bot, '_goal_handle', None)))
     assert r == nav.CANCELED and halted, r                       # estop() dropped it: no waiting on a dead Nav2
     r, halted, _ = run(lambda b: b.goto(1.0, check=False, timeout=5.0))
-    assert isinstance(r, L.Lite3Error) and 'timed out' in str(r) and halted, r
+    assert isinstance(r, Lite3Error) and 'timed out' in str(r) and halted, r
 
     # --- map mode: Nav2 plans in the map frame, and so every goal must be in it ---
     pretend_nav2(arrives=2.0)
@@ -322,7 +327,7 @@ def main():
     def refused(move, **setup):
         before = len(GOALS)
         r, _, sent = run(move, **setup)
-        assert isinstance(r, L.Lite3Error) and not sent and len(GOALS) == before, r     # no goal, no step
+        assert isinstance(r, Lite3Error) and not sent and len(GOALS) == before, r     # no goal, no step
         return str(r)
 
     Bot.floor = None
@@ -352,46 +357,46 @@ def main():
     assert r == nav.SUCCEEDED and len(GOALS) == before + 2, (r, len(GOALS) - before)
     EARLY.extend([True, True])
     r, _, _ = run(lambda b: b.go_to_point(2.0, 5.0), **on_floor())
-    assert isinstance(r, L.Lite3Error) and 'arrived twice' in str(r), r
+    assert isinstance(r, Lite3Error) and 'arrived twice' in str(r), r
     pretend_nav2(arrives=None)
 
     # told where he is while a wide estimate happens to sit nearby (set down after a carry): AMCL must still hear it
     r, _, _ = run(lambda b: b.set_pose(5.0, 5.2, 90, timeout=2.0), **on_floor(locate.SPREAD))
-    assert isinstance(r, L.Lite3Error) and 'too wide' in str(r) and len(POSES) == 1, (r, POSES)
-    assert abs(POSES[0].pose.covariance[0] - nav.POSE_STD[0] ** 2) < 1e-9, POSES[0].pose.covariance[0]   # a tap: wide
+    assert isinstance(r, Lite3Error) and 'too wide' in str(r) and len(POSES) == 1, (r, POSES)
+    assert abs(POSES[0].pose.covariance[0] - maps.POSE_STD[0] ** 2) < 1e-9, POSES[0].pose.covariance[0]   # a tap: wide
     del POSES[:]
     # a pose checked against the walls (demos/check_map.py's best fit) is told to AMCL as narrow
-    run(lambda b: b.set_pose(5.0, 5.2, 90, timeout=2.0, std=nav.FIT_POSE_STD), **on_floor(locate.SPREAD))
+    run(lambda b: b.set_pose(5.0, 5.2, 90, timeout=2.0, std=maps.FIT_POSE_STD), **on_floor(locate.SPREAD))
     c = POSES[0].pose.covariance
-    assert abs(c[0] - nav.FIT_POSE_STD[0] ** 2) < 1e-9 and abs(c[35] - nav.FIT_POSE_STD[1] ** 2) < 1e-9, (c[0], c[35])
+    assert abs(c[0] - maps.FIT_POSE_STD[0] ** 2) < 1e-9 and abs(c[35] - maps.FIT_POSE_STD[1] ** 2) < 1e-9, (c[0], c[35])
     del POSES[:]
 
     # not placed yet: the pose is not said again while the Orin's search (a few seconds) may still be running
     r, _, _ = run(lambda b: b.set_pose(5.0, 5.0, 90, timeout=7.0), **on_floor(locate.NO_POSE))
-    assert isinstance(r, L.Lite3Error) and len(POSES) == 1, (r, len(POSES))
+    assert isinstance(r, Lite3Error) and len(POSES) == 1, (r, len(POSES))
     del POSES[:]
     r, _, _ = run(lambda b: b.set_pose(5.0, 5.0, 90, timeout=10.0), **on_floor(locate.NO_POSE))
-    assert isinstance(r, L.Lite3Error) and len(POSES) == 2, (r, len(POSES))     # but is, in the end
+    assert isinstance(r, Lite3Error) and len(POSES) == 2, (r, len(POSES))     # but is, in the end
     del POSES[:]
 
     # placed, but the first global costmap is late (a big floor): say so, not "Nav2 did not finish starting"
-    late = nav.COSTMAP_WAIT_S
-    nav.COSTMAP_WAIT_S = 0.3
+    late = maps.COSTMAP_WAIT_S
+    maps.COSTMAP_WAIT_S = 0.3
     r, _, _ = run(lambda b: b.set_pose(5.0, 5.0, 90, timeout=2.0), **dict(on_floor(), grid=None))
-    nav.COSTMAP_WAIT_S = late
-    assert isinstance(r, L.Lite3Error) and str(r).startswith('placed at') and 'no global costmap' in str(r), r
+    maps.COSTMAP_WAIT_S = late
+    assert isinstance(r, Lite3Error) and str(r).startswith('placed at') and 'no global costmap' in str(r), r
     del POSES[:]
 
     # lost on the way: the goal is dropped and he stops, he does not walk on a wrong position
     r, halted, _ = run(lambda b: b.go_to_point(2.0, 5.0),
                        at=(9.0, lambda w: setattr(w, 'loc', w.loc._replace(state=locate.NO_FIT))), **on_floor())
-    assert isinstance(r, L.Lite3Error) and 'lost' in str(r) and 'fit the map' in str(r) and halted and CANCELS, r
+    assert isinstance(r, Lite3Error) and 'lost' in str(r) and 'fit the map' in str(r) and halted and CANCELS, r
     del CANCELS[:]
     r, halted, _ = run(lambda b: b.go_to_point(2.0, 5.0), at=(9.0, lambda w: setattr(w, 'loc_stopped', w.t)), **on_floor())
-    assert isinstance(r, L.Lite3Error) and 'lost' in str(r) and halted and CANCELS, r   # locate.py itself died
+    assert isinstance(r, Lite3Error) and 'lost' in str(r) and halted and CANCELS, r   # locate.py itself died
     before = len(GOALS)                     # ... or while he was still turning to face the route: no goal goes out
     r, halted, _ = run(lambda b: b.go_to_point(2.0, 5.0), at=(1.0, lambda w: setattr(w, 'loc_stopped', w.t)), **on_floor())
-    assert isinstance(r, L.Lite3Error) and 'lost' in str(r) and halted and len(GOALS) == before, r
+    assert isinstance(r, Lite3Error) and 'lost' in str(r) and halted and len(GOALS) == before, r
 
     # places: saved where he stands or at a point, gone to by name
     pretend_nav2(arrives=2.0)
@@ -415,9 +420,9 @@ def main():
 
     # stopping a stack this process launched does not wait on its zombie (real time, real process)
     stack = subprocess.Popen(['setsid', 'sleep', '60'])
-    assert L.Lite3._wait(lambda: os.getpgid(stack.pid) == stack.pid, 2.0), 'setsid did not take'
+    assert StackRobot._wait(lambda: os.getpgid(stack.pid) == stack.pid, 2.0), 'setsid did not take'
     began = time.time()
-    nav._kill_group(stack.pid, 6.0, L.Lite3._wait)
+    nav._kill_group(stack.pid, 6.0, StackRobot._wait)
     quick, gone = time.time() - began < 1.5, not nav._alive(stack.pid)
     stack.kill()                                                 # only matters if that failed
     assert quick and gone, 'nav_stop() would stall'

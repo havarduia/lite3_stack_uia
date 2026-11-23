@@ -29,6 +29,8 @@ import socket
 import struct
 import subprocess
 
+from lite3 import Lite3Error  # noqa: F401  (one error class for the SDK and the stack)
+
 MOTION_IP = '192.168.1.120'          # 192.168.2.1 on the robot's own wifi
 AP_IP = '192.168.2.1'                # the motion computer on its own wifi (wifi_mode.sh)
 ORIN_IP = '192.168.1.5'              # the Orin: lidar, its Nav2, his voice (tts_server.py)
@@ -65,10 +67,6 @@ def panel_password_ok(given):
     password = open(PANEL_PASSWORD_FILE).read().strip()
     return hmac.compare_digest(given.encode(), password.encode())
 
-
-
-class Lite3Error(RuntimeError):
-    """Refused for a reason the caller can act on."""
 
 
 # --- motion port, simple frames <code, value, 0> ----------------------------
