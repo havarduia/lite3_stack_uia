@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """tts_server - his voice: Kokoro text-to-speech on the Orin's GPU (docs/voice.md).
 
-robot/talk.py (RemoteSpeaker) on the perception computer sends one sentence per line
+robot/voice.py (RemoteSpeaker) on the perception computer sends one sentence per line
 over TCP. Each answer is a little-endian uint32 byte count, then that many bytes of
 16-bit mono PCM at RATE Hz. The model stays loaded, so a sentence costs ~0.4 s
 (Piper on the Xavier: 0.3-1.7 s, and the user disliked its voice, 2026-11-09).
@@ -25,7 +25,7 @@ import onnxruntime as ort
 from kokoro_onnx import Kokoro
 
 BIND = (os.environ.get('TTS_BIND', '192.168.1.5'), 8047)
-RATE = 24000                                        # Kokoro's own; talk.py's TTS_RATE must match
+RATE = 24000                                        # Kokoro's own; robot/voice.py's TTS_RATE must match
 VOICE = os.environ.get('TTS_VOICE', 'bm_george')    # the user's pick, 2026-11-09
 SPEED = float(os.environ.get('TTS_SPEED', '1.0'))
 LANG = 'en-gb' if VOICE.startswith('b') else 'en-us'    # b* voices are British

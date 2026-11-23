@@ -32,7 +32,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from robot.nav import LETHAL, dist, goal_ahead, status_text
 from robot.protocol import Lite3Error
-from robot.talk import Voice
+from robot.voice import Talker
 
 DONE = 'That was my walk: %.1f metres.'
 APPROACH_MARGIN = 0.2  # stop this far short of the last free cell
@@ -202,7 +202,7 @@ def main():
                     help='walk without the depth-camera obstacle stop')
     ap.add_argument('--handheld', dest='heartbeat', action='store_false',
                     help='use the powered-on handheld instead of our own heartbeat')
-    ap.add_argument('--voice', default=None, help='a Piper voice (python3 -m robot.talk voices)')
+    ap.add_argument('--voice', default=None, help='a Piper voice (python3 -m robot.voice voices)')
     ap.add_argument('--finale', default=None,
                     help='at the end, still standing, say this instead of how far he walked')
     ap.add_argument('--look-up', type=float, default=12.0, metavar='DEG',
@@ -216,7 +216,7 @@ def main():
                          'the body centre the distance is measured from); the '
                          'camera cannot see that close either. Use >= 0.4.' % a.stop)
 
-    voice = Voice()
+    voice = Talker()
     from robot.lite3 import Lite3
     # upright(): arm, stand, and on the way out sit FIRST; close() then
     # disarms SECOND.

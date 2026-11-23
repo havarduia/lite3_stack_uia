@@ -367,7 +367,7 @@ class Robot:
     def _speaker(self):
         """The kept link to the Orin's voice, opened if there is none (talk thread only)."""
         if self.speaker is None:
-            from .talk import speaker
+            from .voice import speaker
             try:
                 self.speaker = speaker()
             except Exception as e:                      # the Orin's voice is down: say so at the Say
@@ -377,7 +377,7 @@ class Robot:
 
     def _talk(self, text):
         try:
-            from .talk import sentences
+            from .voice import sentences
             self.emit({'t': 'said', 'who': 'robot', 'text': text})
             for last in (False, True):
                 sp = self._speaker()
@@ -565,8 +565,8 @@ class Server:
         ws = web.WebSocketResponse(heartbeat=PING_S)
         await ws.prepare(request)
         self.pages.add(ws)
-        from . import talk
-        await ws.send_str(json.dumps({'t': 'hello', 'log': self.log, 'volume': talk.VOLUME}))
+        import lite3.speaker
+        await ws.send_str(json.dumps({'t': 'hello', 'log': self.log, 'volume': lite3.speaker.VOLUME}))
         try:
             async for m in ws:
                 if m.type != WSMsgType.TEXT:
@@ -640,8 +640,8 @@ class Server:
         elif k == 'watch':
             pass    # the page says it for every camera; only the two above have a stream to start here
         elif k == 'volume':
-            from . import talk
-            talk.VOLUME = min(1.0, max(0.0, float(c['v'])))
+            import lite3.speaker
+            lite3.speaker.VOLUME = min(1.0, max(0.0, float(c['v'])))
         elif k == 'say':
             text = (c.get('text') or '').strip()
             if text:
