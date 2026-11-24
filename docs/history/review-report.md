@@ -1,6 +1,6 @@
 # Review report: Lite3 robot, code + hardware stack
 
-Written 2026-11-13 from `docs/review-brief.md`. Read-only review: nothing was
+Written 2026-11-13 from `docs/history/review-brief.md`. Read-only review: nothing was
 edited and nothing was run on the robot. The repo's offline self-checks all
 pass (`python3 -m robot.{lio_relay,locate,shadow_link,orin_nav,cloud_locate,mapmaker} check`,
 `orin/bin/orin_nav.py check`, `orin/bin/shadow_nav.py check`,

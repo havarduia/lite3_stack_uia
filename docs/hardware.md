@@ -3,12 +3,14 @@
 The stock robot alone is described in the SDK's `docs/robot.md`; this page
 adds what this project put around it (the Orin, Nav2, the panel).
 
-## The hardware and the two computers
+## The hardware and the three computers
 
-The Lite3 Pro uses a "split brain": an RK3588 ARM motion host running the
+The Lite3 Pro comes with a "split brain": an RK3588 ARM motion host running the
 high-rate (1 kHz) joint control loop, and a Jetson Xavier NX perception host
-for SLAM, navigation and vision
-([DEEP Robotics](https://www.deeprobotics.us/products/lite-3/)).
+for vision ([DEEP Robotics](https://www.deeprobotics.us/products/lite-3/)).
+This project bolted a third on: an Orin Nano with a Livox MID-360 lidar, on an
+Ethernet switch on his back. **All the navigation runs on the Orin**; perception
+only relays to it, so taking the Orin away leaves the robot close to stock.
 
 ```
                         ┌───────────────────────────────────────────┐
@@ -29,23 +31,36 @@ for SLAM, navigation and vision
   RealSense D435i ─USB─►│  realsense_ros2.service  depth + colour   │
   (depth camera,        │  transfer_ros2.service   UDP <-> ROS2     │
    pitched 20° down)    │         (Jetson2Motion, patched by us)    │
-                        │  voa_ros2.service  vendor obstacle        │
-                        │                    avoidance (optional)   │
-                        │  Nav2 costmaps     started by our code    │
-                        │  ► THIS REPOSITORY ◄                      │
+                        │  ► THIS REPOSITORY ◄  lite3_sdk +         │
+                        │    StackRobot, the web panel (hmi), the   │
+                        │    relays to the Orin (orin_nav.py,       │
+                        │    lio_relay.py, sonar_range.py)          │
+                        └──────────────────┬────────────────────────┘
+                                   Ethernet │ UDP 8044/8045 (and more)
+                        ┌──────────────────▼────────────────────────┐
+  Livox MID-360 ─Eth──► │  ORIN Nano (192.168.1.5), added by us     │
+  (192.168.1.102)       │  Ubuntu 22.04, ROS2 Humble                │
+                        │  livox driver, FAST-LIO2 (odometry),      │
+                        │  cloud_locate (where he is on the map),   │
+                        │  Nav2: Smac 2D, MPPI, collision monitor;  │
+                        │  local costmap = lidar + depth camera     │
+                        │  Kokoro TTS (his voice), lidar panel :8000│
                         └───────────────────────────────────────────┘
-                                        │ Tailscale (VPN)
-                                        ▼
-                              laptop / phone → web HMI :8080
+          laptop / phone ── Tailscale (VPN) ──► perception's web HMI :8080
 ```
+
+The vendor's obstacle avoider (`voa_ros2`) is off: the panel's switch for it stays off,
+and the Orin's collision monitor does its job.
 
 Where each sensor lives matters in the code:
 
 | Thing | Lives on | How our code reaches it |
 |---|---|---|
 | Walking, posture, tricks | motion (`jy_exe`) | UDP packets from the SDK (`lite3.udp`), or `/cmd_vel` via `transfer_ros2` |
-| Robot state, battery, leg odometry, IMU, sonars | motion → republished on Jetson | ROS2 topics from `transfer_ros2` |
-| Depth camera (RealSense D435i) | Jetson, USB | ROS2 topic `/camera/depth/color/points` |
+| Robot state, battery, leg odometry, IMU, sonars | motion → republished on perception | ROS2 topics from `transfer_ros2`; the sonars go on to the Orin |
+| Depth camera (RealSense D435i) | perception, USB | ROS2 topic `/camera/depth/color/points`; thinned copies go to the Orin's Nav2 |
+| Lidar (Livox MID-360) | Orin, Ethernet | FAST-LIO2's pose comes back as `/odom_fused` (`robot/lio_relay.py`) |
+| Navigation (Nav2) | Orin | goals and the speed it drives at pass through `robot/orin_nav.py` |
 | Front wide-angle camera | motion | RTSP stream, grabbed with `ffmpeg` |
 | Speaker | motion | `ssh` to the motion computer, run `aplay` |
 
@@ -76,8 +91,7 @@ SDK, and several were captured from the handheld and phone app by us.
 
 ```
 our code ──/cmd_vel (Twist)──► Jetson2Motion (transfer_ros2) ──UDP cmd 320──► jy_exe
-Nav2's controller ──/cmd_vel──┘
-voa ──/cmd_vel_corrected──────┘  (if the vendor obstacle avoider is running)
+the Orin's Nav2 ──UDP──► robot/orin_nav.py ──/cmd_vel──┘
 ```
 
 `Jetson2Motion` is the vendor's bridge node. In the other direction it takes

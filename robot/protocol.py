@@ -1,4 +1,4 @@
-"""protocol - the stack's addresses and the panel's password, in one place. No ROS.
+"""protocol - the stack's addresses, in one place. No ROS.
 
 The robot's own codes, addresses and send() are the SDK's (lite3.udp); the
 names the stack used from here are passed through. Send one raw code from the

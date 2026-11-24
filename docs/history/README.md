@@ -8,6 +8,8 @@ work now.
   map mode and Nav2 tuning, by numbered section and date. Code comments
   cite it as "docs/history/LIDAR_ORIN_LOG.md section N".
 - [SESSION_2026-10-09.md](SESSION_2026-10-09.md): the day map mode first worked.
+- [review-brief.md](review-brief.md) and [review-report.md](review-report.md): the outside
+  review of 2026-11-13 and its nine findings (all fixed the same day).
 - Plans and specs are in `.planning/` at the repository root.
 
 ## Old README section numbers
@@ -17,23 +19,23 @@ These notes and the plans cite sections of the old, single README
 
 | Old README section | Now in |
 |---|---|
-| §1 The two-minute explanation | [README](../../README.md#the-idea-in-one-paragraph) |
-| §2 The hardware and the two computers | [hardware.md](../hardware.md#the-hardware-and-the-two-computers) |
+| §1 The two-minute explanation | [README](../../README.md#the-idea) |
+| §2 The hardware and the two computers | [hardware.md](../hardware.md#the-hardware-and-the-three-computers) |
 | §3 How a command reaches the legs | [hardware.md](../hardware.md#how-a-command-reaches-the-legs) |
 | §4 Repository layout | [README](../../README.md#repository-layout) |
-| §5 The core: `Lite3` (`robot/lite3.py`) | [api.md](../api.md#the-core-lite3-robotlite3py) |
-| §5.1 Structure | [api.md](../api.md#structure) |
-| §5.2 State | [api.md](../api.md#state) |
-| §5.3 Posture: `stand()`, `sit()`, `tilt()`, `action()` | [api.md](../api.md#posture-stand-sit-tilt-action) |
-| §5.4 Motion: `walk()`, `turn()`, `strafe()`, `steer()` | [api.md](../api.md#motion-walk-turn-strafe-steer) |
-| §5.5 Emergency stop | [api.md](../api.md#emergency-stop) |
-| §5.6 Voice pass-through | [api.md](../api.md#voice-pass-through) |
+| §5 The core: `Lite3` (`robot/lite3.py`) | the SDK (lite3_sdk_uia, its `docs/api.md`) |
+| §5.1 Structure | the SDK (lite3_sdk_uia, its `docs/api.md`) |
+| §5.2 State | the SDK (lite3_sdk_uia, its `docs/api.md`) |
+| §5.3 Posture: `stand()`, `sit()`, `tilt()`, `action()` | the SDK (lite3_sdk_uia, its `docs/api.md`) |
+| §5.4 Motion: `walk()`, `turn()`, `strafe()`, `steer()` | the SDK (lite3_sdk_uia, its `docs/api.md`) |
+| §5.5 Emergency stop | the SDK (lite3_sdk_uia, its `docs/api.md`) |
+| §5.6 Voice pass-through | the SDK (lite3_sdk_uia, its `docs/api.md`) |
 | §5.7 Command line | [api.md](../api.md#command-line) |
-| §6 Seeing: depth camera and sonars | [api.md](../api.md#seeing-depth-camera-and-sonars) |
-| §6.1 Depth camera → obstacle ranges (`robot/depth.py`) | [api.md](../api.md#depth-camera--obstacle-ranges-robotdepthpy) |
+| §6 Seeing: depth camera and sonars | the SDK (lite3_sdk_uia, its `docs/api.md`) |
+| §6.1 Depth camera → obstacle ranges (`robot/depth.py`) | the SDK (lite3_sdk_uia, its `docs/api.md`) |
 | §6.2 Sonars → Nav2 (`robot/sonar_range.py`) | [api.md](../api.md#sonars--nav2-robotsonar_rangepy) |
 | §7 Navigation: mapless Nav2 | [navigation.md](../navigation.md) |
-| §7.1 What "mapless" means | [navigation.md](../navigation.md#what-mapless-means) |
+| §7.1 What "mapless" means | removed 2026-11-24 (mapless Nav2 is gone; git history) |
 | §7.2 Starting and stopping Nav2 safely | [navigation.md](../navigation.md#starting-and-stopping-nav2-safely) |
 | §7.3 Reading the costmap and choosing goals | [navigation.md](../navigation.md#reading-the-costmap-and-choosing-goals) |
 | §7.4 `goto(forward, heading_deg=None)` | [navigation.md](../navigation.md#gotoforward-heading_degnone) |
@@ -41,11 +43,11 @@ These notes and the plans cite sections of the old, single README
 | §7.6 What he says on a map goal | [navigation.md](../navigation.md#what-he-says-on-a-map-goal) |
 | §8 Finding and following people | removed 2026-10-23 (see [voice.md](../voice.md)) |
 | §9 Talking: speaker, TTS and Gemini | [voice.md](../voice.md) |
-| §9.1 `Voice`: one sound at a time | [voice.md](../voice.md#voice-one-sound-at-a-time) |
+| §9.1 `Voice`: one sound at a time | [voice.md](../voice.md#talker-one-sound-at-a-time) |
 | §9.2 `Speaker`: streaming, sentence by sentence | [voice.md](../voice.md#speaker-streaming-sentence-by-sentence) |
 | §9.3 `Talker`: Gemini answers, in its own voice | removed 2026-10-23 (see [voice.md](../voice.md)) |
 | §10 Programs you run | [tools.md](../tools.md) |
-| §10.1 `bin/tour.py`: walk a route and comment on it | [tools.md](../tools.md#bintourpy-walk-a-route) |
+| §10.1 `bin/tour.py`: walk a route and comment on it | removed (bin/tour.py is gone; git history) |
 | §10.2 `bin/teleop.py`: keyboard driving over SSH | [tools.md](../tools.md#binteleoppy-keyboard-driving-over-ssh) |
 | §10.3 `robot/hmi.py`: web control panel | [panel.md](../panel.md) |
 | §10.4 `demos/` | [tools.md](../tools.md#demos) |

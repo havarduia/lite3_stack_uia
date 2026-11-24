@@ -2,7 +2,7 @@
 
 Since 2026-10-08 the robot carries an Ethernet switch (TP-Link TL-SG105E)
 with a Livox MID-360 lidar (192.168.1.102) and an Orin Nano (192.168.1.5,
-user `lite3`) on it, on the same 192.168.1.x network as the two computers.
+user `lite3`) on it, on the same 192.168.1.x network as the vendor's two computers. The Orin runs all the navigation since 2026-11-24 ([Hardware](hardware.md)).
 The Orin runs the lidar driver and, when a Live run is started from its
 web panel (port 8000), FAST-LIO2. Its own notes are in `~/bin/README.md`
 there.

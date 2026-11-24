@@ -2,7 +2,8 @@
 
 Navigation, maps, speech, a web panel and tools for a **DEEP Robotics Lite3
 Pro** quadruped ("robot dog"). It runs on the robot's perception computer
-(Xavier NX, Ubuntu 20.04, ROS2 Foxy, Python 3.8), on top of the robot SDK
+(Xavier NX, Ubuntu 20.04, ROS2 Foxy, Python 3.8) and on an Orin Nano we added
+(`orin/`), on top of the robot SDK
 [lite3_sdk_uia](https://github.com/havarduia/lite3_sdk_uia) (`import lite3`), which does everything the
 stock robot can: posture, motion, state, depth camera, sonars, speaker.
 
@@ -21,12 +22,28 @@ odometry from the Orin, Nav2 navigation on a floor map (the Orin plans and
 drives with MPPI), named places, and his voice. On top of it: keyboard teleop
 and a web control panel.
 
-## The idea in one paragraph
+## The idea
 
-The robot has two computers. The **motion computer** runs the vendor's
-closed controller (`jy_exe`) that balances and walks. The **perception
-computer** runs ROS2, the depth camera and this repository. Out of the box
-the robot ignores commands without saying why: wrong mode, lying down, low
+Three computers ([docs/hardware.md](docs/hardware.md)):
+
+```
+ Orin Nano (added, Humble)   lidar, FAST-LIO2, 3D localizer, Nav2 (Smac + MPPI + collision
+        ▲   │                monitor, camera in its costmap), his voice (Kokoro)
+        │   │ UDP: goals, camera points, sonars ▲ / status, route, costmap, cmd_vel ▼
+ perception (vendor's, Foxy) lite3_sdk + StackRobot, relays, web panel, RealSense driver
+        │
+ motion (vendor's)           jy_exe: balance and gait, front camera, speaker
+```
+
+All the navigation is **bolted on**: it lives on the Orin, and perception only relays to
+it. Take the Orin away and the robot is close to stock again: the legs alone give the
+odometry, and the SDK and the panel still work.
+
+The **motion computer** runs the vendor's closed controller (`jy_exe`) that balances
+and walks. The **perception computer** runs ROS2, the depth camera, the SDK and this
+repository's relays and panel. The **Orin** does everything that needs the lidar.
+
+Out of the box the robot ignores commands without saying why: wrong mode, lying down, low
 battery, not "armed". The SDK's `Lite3` class turns each of those silent failures
 into an automatic fix or a clear `Lite3Error`. It keeps the robot's state
 as plain attributes (`bot.battery`, `bot.pose`, `bot.standing`). Every
@@ -110,7 +127,7 @@ itself is the SDK's, with its own checks in `lite3_sdk_uia/tests/`.
 |---|---|
 | understand the computers, the network ports and the arming interlock | [docs/hardware.md](docs/hardware.md) |
 | use the robot itself: state, posture, motion, e-stop, depth camera, speaker | the SDK's `docs/api.md` and `docs/robot.md` |
-| see what `StackRobot` adds, and the sonars for Nav2 | [docs/api.md](docs/api.md) |
+| see what `StackRobot` adds, and the sonars | [docs/api.md](docs/api.md) |
 | navigate with Nav2 on a floor map, and save places | [docs/navigation.md](docs/navigation.md) |
 | make the robot talk | [docs/voice.md](docs/voice.md) |
 | run or change the web panel, cameras and wifi networking | [docs/panel.md](docs/panel.md) |
@@ -133,8 +150,9 @@ robot/                 the library: `from robot.stack import StackRobot`
   nav.py               Nav2 start/stop, costmap, goto(), the turn sweep check (part of StackRobot)
   maps.py              floor maps, where he is on one, places, go_to()         (part of StackRobot)
   voice.py             text-to-speech (Kokoro on the Orin) through the SDK's speaker (part of StackRobot)
-  protocol.py          the stack's addresses, the panel password; no ROS; also a raw-code CLI
-  sonar_range.py       ROS node: sonars -> sensor_msgs/Range for Nav2
+  protocol.py          the stack's addresses; no ROS; also a raw-code CLI
+  orin_nav.py          the link to the Orin's Nav2: goals, camera points, sonars out; status, cmd_vel back
+  sonar_range.py       ROS node: sonars -> sensor_msgs/Range for the Orin's collision monitor
   hmi.py               web control panel server; the page is in hmi_static/
   rs_stream.py         RealSense colour -> H.264 video          (started by hmi.py)
   udp_relay.py         WebRTC video to the panel                 (started by hmi.py)
@@ -143,8 +161,11 @@ robot/                 the library: `from robot.stack import StackRobot`
   locate.py            is the robot localized on the floor map? -> /localized
   places.py            named places per floor, in ~/lite3_maps/<floor>/places.json
   mapmaker.py          a floor map from one walk (the panel's Record map)
-  cloud_locate.py      where he is on a floor's 3D map, from lidar scans  (runs on the ORIN)
+  cloud_locate.py      where he is on a floor's 3D map, from lidar scans  (runs on the Orin)
   cloudreg.py          lidar scan to 3D map matching (ICP), used by cloud_locate.py
+orin/                  the Orin: deploy.sh copies orin/bin/ to its ~/bin; its own README.md
+  bin/nav.sh, orin_nav2.yaml, orin_nav.py   its Nav2 and the link to perception
+  bin/lio_*.py, lidar_*.py, map_*.py        FAST-LIO2 runs, the lidar panel (:8000), floor maps
   loadwatch.py         CPU and memory log of one computer   (used by bin/run.py)
   frontcam.py          front camera frames during a run      (used by bin/run.py)
 bin/                   things you run
@@ -191,14 +212,9 @@ docs/                  the documentation; docs/history/ has lab notes
   refuse to start (docs/lidar.md).
 - Below **~0.2 m/s** the gait shuffles and drifts sideways.
 - The perception computer's clock is skewed: file timestamps are meaningless.
-- **Metal-grid fences fool the depth camera.** On the bridge (2026-10-28,
-  `logs/2026-10-28_bridge-depth`), the D435 on its default preset reported points
-  0.4-0.7 m ahead at lens height, where the lidar saw 1.3-2.6 m. They stayed in the
-  costmap for 15 s, he walked into them, and RPP held him at 0.15 m/s for 86% of
-  the crossing (0.50 off the bridge). `env/camera.launch.py` now uses the High
-  Accuracy preset (3), which keeps about 40% of the points (3900 -> 1600 per cloud).
-  Re-tested the same day (`logs/2026-10-28_bridge-depth-2`): no phantoms, and 0.50 m/s
-  over most of the bridge both ways.
+- **Metal-grid fences fool the depth camera** on its default preset (phantom points
+  0.4-0.7 m ahead on the bridge, 2026-10-28). `env/camera.launch.py` uses the High
+  Accuracy preset (3) for that; don't change it back.
 
 ## Known limitations
 
@@ -207,7 +223,7 @@ docs/                  the documentation; docs/history/ has lab notes
 - **Blind spots.** The depth camera sees ±45° ahead only. Walking backwards
   with `walk()` and all of `teleop.py` have no obstacle guard. The lidar
   sees round him, but not low things right beside him.
-- **Map mode is young.** It works on the floors it was tested on
-  (docs/navigation.md). Nav2 needs a floor map: there is no mapless mode.
+- **Nav2 needs a floor map** (docs/navigation.md), and the Orin: without it he walks,
+  turns and uses the depth camera, but does not navigate or speak (his voice is on the Orin too).
 - **`estop(disarm=True)`** while standing is untested.
 - Of the built-in tricks, only `dance` has been run on this robot.

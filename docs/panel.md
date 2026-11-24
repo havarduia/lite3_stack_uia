@@ -136,7 +136,7 @@ The front camera is the robot's own H.264 stream (1280×720, 30 fps). The
 RealSense colour image is put there by `robot/rs_stream.py`, which runs only
 while a page shows that view and for 10 s after. A browser cannot reach the
 motion computer, so `hmi.py` rewrites the WebRTC answer to point at
-`robot/udp_relay.py` on the Jetson, which forwards the video. If WebRTC does
+`robot/udp_relay.py` on the perception computer, which forwards the video. If WebRTC does
 not connect, the front camera falls back to MJPEG (ffmpeg, 640 px, 8 fps); the
 RealSense view has no fallback.
 
@@ -146,7 +146,7 @@ Why they are built this way (all measured 2026-10-05, at 1280×720):
   `ros-foxy-compressed-image-transport`): raw frames do not get through ROS
   into Python fast enough, a subscriber that did nothing received 8 of 30 a
   second.
-- It uses the Jetson's **hardware** H.264 encoder: libx264 ultrafast managed
+- It uses the perception computer's **hardware** H.264 encoder: libx264 ultrafast managed
   23 fps on 1.5 cores. But it decodes with `jpegdec`, not `nvjpegdec`: the
   hardware JPEG decoder kept handing out its first frame, so the video was a
   still. Baseline profile (WebRTC cannot take B-frames) with a keyframe a

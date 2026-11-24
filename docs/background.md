@@ -25,7 +25,11 @@ These are the ideas behind the code; useful if asked "why is it built like this?
 6. **Keep ROS optional where possible.** `protocol.py`, `voice.py` and the
    SDK's `udp`, `speaker` and `camera` don't import `rclpy`; `lite3.Lite3` loads it only when used.
 7. **Change vendor code minimally, and keep the diff.** Every vendor change is
-   a patch file in `env/` with the reasoning inside.
+   a patch file in `env/` (or `orin/`) with the reasoning inside.
+8. **Navigation is bolted on.** Everything that needs the lidar (FAST-LIO2, the
+   3D localizer, Nav2) runs on the Orin we added; perception runs the SDK, the
+   panel, the camera driver and relays. Take the Orin away and the robot is close
+   to stock. New navigation work goes on the Orin.
 
 ## Questions you are likely to be asked
 
@@ -35,13 +39,12 @@ implementation, not in auto mode, not standing, low battery, posture mode,
 unarmed robot, Nav2 outliving your process. `Lite3` encodes all of that once.
 
 **How does it avoid obstacles?**
-Three layers. (1) `walk()`/`turn()` check the depth camera at 4 Hz and stop.
-(2) Nav2 (on the Orin, on a floor map) plans around obstacles in costmaps
-built from the lidar, the depth camera (3D voxels that fade after 2.5 s) and
-the two sonars, with a collision monitor on every command
-([navigation.md](navigation.md#what-runs-where)). (3) Optionally, the
-vendor's `voa` node corrects velocities in real time (we fixed it so it
-actually can).
+Two layers. (1) `walk()`/`turn()` check the depth camera at 4 Hz and stop.
+(2) Nav2 on the Orin, on a floor map, plans around obstacles in a costmap
+built from the lidar and the depth camera (3D voxels that fade after 2.5 s), and
+its collision monitor checks every command against the lidar, the camera and the
+front sonar ([navigation.md](navigation.md#what-runs-where)). The vendor's `voa`
+node could correct velocities too (we fixed it so it actually can), but it is off.
 
 **How do you convert the point cloud into obstacles?**
 Transform from the camera's optical frame to the robot body frame, correcting
@@ -66,26 +69,13 @@ own failsafe stops it ~1.5 s after velocity commands stop arriving.
 The motors are too loud to hear the speaker while walking.
 
 **What did you change in vendor code?**
-Five patches ([Patches (env/*.patch)](environment.md#patches-envpatch)); the most important fixed a bug where every velocity
+Four in `env/` and FAST-LIO2's in `orin/` ([Patches (env/*.patch)](environment.md#patches-envpatch)); the most important fixed a bug where every velocity
 command reached the robot twice, which made the vendor obstacle avoider
 useless, and one where its configuration was silently never loaded.
 
 ## History
 
-| Date | Change |
-|---|---|
-| 2026-09-14 | Loose scripts in `~` replaced by one API (`lite3.py`); old scripts archived |
-| 2026-09-15 | Initial git import; package structure; costmap-settle fix; heartbeat in `shake.py` |
-| 2026-09-18 | Posture/tilt, `steer()`, side-check on turns, person following, Piper TTS, Gemini Live, personas |
-| 2026-09-21 | Arming fix in `stand()`; speaker lead-in fix |
-| 2026-09-24 | `lite3.py` split into `protocol`/`nav`/`depth`; tricks; voice+rocky merged into `talk.py` |
-| 2026-09-25 | New camera stack (realsense-ros 4.58), sonars, safety stops, voa fixes |
-| 2026-09-27 | Camera independent of voa; Nav2 config tuned and recorded as a patch |
-| 2026-09-28 | Odometry ×1.15; turn coast fix; sonars in Nav2; web HMI |
-
-The pre-git history (`.bak` files and the superseded loose scripts) was kept
-in `archive/` until commit `c4cfb84`, and `robot/run_robot.py` (`Mission`, a
-scripted-run wrapper nothing used) with it: `git show c4cfb84:archive/backups/README.md`.
+`git log`, and the lab notes in [docs/history/](history/README.md).
 
 ## Glossary
 
@@ -104,10 +94,13 @@ scripted-run wrapper nothing used) with it: `git show c4cfb84:archive/backups/RE
 | **costmap** | grid of traversal costs (0 free … 99 lethal) Nav2 plans on |
 | **STVL** | Spatio-Temporal Voxel Layer: costmap layer of decaying 3D voxels |
 | **inflation** | costmap layer that adds cost near obstacles, keeping the robot away from them |
-| **NavFn / RPP / DWB** | Nav2's global path planner / the local controller since 2026-10-15 (Regulated Pure Pursuit) / the one before it |
+| **Smac 2D / MPPI** | Nav2's global planner / its local controller (Model Predictive Path Integral), both on the Orin since 2026-11-24 |
+| **collision monitor** | Nav2 node with the last word on every command: stops or slows him for what the sensors see in its zones |
+| **FAST-LIO2** | lidar-inertial odometry on the Orin; corrects the leg odometry |
+| **Orin** | the Orin Nano we added, with the lidar: all the navigation runs there |
 | **CycloneDDS** | the DDS middleware ROS2 uses here (the default FastRTPS doesn't work on this robot) |
 | **RMW** | ROS middleware interface; selects the DDS implementation |
-| **Piper** | offline neural text-to-speech |
+| **Kokoro** | the neural text-to-speech on the Orin that is his voice (Piper before 2026-11-09) |
 | **MJPEG** | video as a stream of JPEG images; plays in any `<img>` tag |
-| **Tailscale** | VPN; the HMI is only reachable through it |
+| **Tailscale** | VPN; the HMI is reachable through it, or on his own wifi |
 | **dead-man switch** | control that stops the machine when the operator stops actively holding it |

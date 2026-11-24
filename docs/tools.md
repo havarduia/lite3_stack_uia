@@ -136,7 +136,7 @@ so and shows the small ones. Delete the folder to go back to them.
   cannot starve the model. Measured 2026-10-07 on a relayed link, with the
   160 kB camera picture also going (since removed): cloud 2 Hz, sonars
   11 Hz.
-- Every extra topic is one more subscriber on a loaded Jetson ([Measured numbers and calibration](environment.md#measured-numbers-and-calibration)).
+- Every extra topic is one more subscriber on a loaded perception computer ([Measured numbers and calibration](environment.md#measured-numbers-and-calibration)).
   The depth cloud is the heavy one: name it when you want it, not always.
 - A message type the laptop does not have (`transfer_interfaces`, the
   RealSense extras) is skipped with a line saying so.
