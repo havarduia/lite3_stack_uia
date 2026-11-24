@@ -205,7 +205,16 @@ def check_floor_grid(folder):
     assert at(0.15, 0.55) == 100 and at(0.15, 0.2) == 0 and at(1.5, 0.2) is None      # grey is a wall; off it, None
 
 
+def check_turned_grid():
+    """The Orin's costmap, re-anchored on this odom, is turned (robot/orin_nav.py anchor): a 2 x 1 grid
+    of 1 m cells at (1, 0) turned half round covers x 0..1 (cell 0) and -1..0 (cell 1), y -1..0."""
+    o = types.SimpleNamespace(position=types.SimpleNamespace(x=1.0, y=0.0), orientation=types.SimpleNamespace(z=1.0, w=0.0))
+    g = types.SimpleNamespace(info=types.SimpleNamespace(origin=o, resolution=1.0, width=2, height=1), data=[7, 9])
+    assert (nav.cell(g, 0.5, -0.5), nav.cell(g, -0.5, -0.5), nav.cell(g, 0.5, 0.5)) == (7, 9, None)
+
+
 def main():
+    check_turned_grid()
     check_stack()
     # every way out of a motion call leaves him stopped, and says why
     r, halted, _ = run(lambda b: b.walk(0.5, stop_distance=None))

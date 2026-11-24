@@ -48,11 +48,22 @@ OBSTACLE = 100
 SWEEP_STEP = math.radians(5)
 
 
+def cell_of(grid, x, y):
+    """The (column, row) of (x, y), in the grid's frame, on a costmap whose origin may be turned (the
+    Orin's local costmap, re-anchored on this odom by robot/orin_nav.py)."""
+    o = grid.info.origin
+    q = getattr(o, 'orientation', None)
+    yaw = 2 * math.atan2(q.z, q.w) if q is not None else 0.0
+    c, s = math.cos(yaw), math.sin(yaw)
+    dx, dy = x - o.position.x, y - o.position.y
+    r = grid.info.resolution
+    return int(math.floor((c * dx + s * dy) / r)), int(math.floor((-s * dx + c * dy) / r))
+
+
 def cell(grid, x, y):
     """A costmap's value at (x, y) in its frame, or None off it."""
     i = grid.info
-    cx = int(math.floor((x - i.origin.position.x) / i.resolution))
-    cy = int(math.floor((y - i.origin.position.y) / i.resolution))
+    cx, cy = cell_of(grid, x, y)
     if not (0 <= cx < i.width and 0 <= cy < i.height):
         return None
     return int(grid.data[cy * i.width + cx])
@@ -68,8 +79,7 @@ def under(grid, pose, half=FOOTPRINT_HALF):
     for a in range(nx):
         for b in range(ny):
             bx, by = -hx + 2 * hx * a / (nx - 1), -hy + 2 * hy * b / (ny - 1)
-            cx = int((pose[0] + bx * c - by * s - i.origin.position.x) / r)
-            cy = int((pose[1] + bx * s + by * c - i.origin.position.y) / r)
+            cx, cy = cell_of(grid, pose[0] + bx * c - by * s, pose[1] + bx * s + by * c)
             if 0 <= cx < i.width and 0 <= cy < i.height:
                 cells.add(cy * i.width + cx)
     return cells

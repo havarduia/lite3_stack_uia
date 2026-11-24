@@ -26,7 +26,7 @@ import sys
 import threading
 import time
 
-from .lio_relay import ORIN, yaw_of
+from .lio_relay import ORIN, inv, join, yaw_of
 
 # The layouts and ports orin/bin/orin_nav.py reads (check() compares them)
 ORIN_PORT = 8044
@@ -56,7 +56,6 @@ CANCEL = struct.Struct('<cI')       # C, goal number
 STATUS = struct.Struct('<cIBB')     # A, goal number, action_msgs GoalStatus (0: not taken yet), why refused
 NO_ROUTE = 1
 COSTMAP = struct.Struct('<c3dB3dHH')    # M, the Orin's base_link x y yaw, Nav2 up, origin x y, resolution, w, h; int8 cells
-ANCHOR_YAW = math.radians(3)    # both odoms are FAST-LIO2's: a costmap whose base disagrees more is not used
 PATH = struct.Struct('<c')          # P; float32 (x, y) on the map follow
 EXECUTING, SUCCEEDED, CANCELED, ABORTED = 2, 4, 5, 6
 RESEND_S = 0.2
@@ -94,11 +93,10 @@ def camera_packet(when, optical):
 
 
 def anchor(orin_base, base, origin):
-    """The Orin's costmap origin (x, y) in this odom, given base_link in both, or None if they disagree
-    on his heading (then the odoms are not the same and the costmap would lie)."""
-    if abs(math.remainder(base[2] - orin_base[2], math.tau)) > ANCHOR_YAW:
-        return None
-    return origin[0] + base[0] - orin_base[0], origin[1] + base[1] - orin_base[1]
+    """The Orin's costmap origin (x, y) as (x, y, yaw) in this odom, given base_link in both. The two odoms
+    are not one frame: the Orin's is FAST-LIO2's, this one leg odometry corrected by it (about 176 deg
+    apart on 2026-11-24, and drifting), so the grid is turned as well as moved."""
+    return join(join(base, inv(orin_base)), (origin[0], origin[1], 0.0))
 
 
 def goal_end(status, cancelling):
@@ -263,17 +261,11 @@ def main(dry=False):
         if 'base' not in here or len(data) != COSTMAP.size + w * h:
             return
         o = anchor((x, y, yaw), here['base'], (ox, oy))
-        if o is None:
-            if not here.get('unanchored'):
-                say('the Orin\'s odom and this one disagree on his heading: its costmap is not used')
-            here['unanchored'] = True
-            return
-        here['unanchored'] = False
         m = OccupancyGrid()
         m.header.frame_id, m.header.stamp = 'odom', node.get_clock().now().to_msg()
         m.info.resolution, m.info.width, m.info.height = res, w, h
-        m.info.origin.position.x, m.info.origin.position.y = o
-        m.info.origin.orientation.w = 1.0
+        m.info.origin.position.x, m.info.origin.position.y = o[0], o[1]
+        m.info.origin.orientation.z, m.info.origin.orientation.w = math.sin(o[2] / 2), math.cos(o[2] / 2)
         m.data = np.frombuffer(data, np.int8, offset=COSTMAP.size).tolist()
         grid_pub.publish(m)
 
@@ -356,10 +348,12 @@ def check():
     assert xyz.shape == (1, 3) and CAMERA_Z[0] <= xyz[0, 2] <= CAMERA_Z[1] and xyz[0, 0] > CAMERA_XYZ[0], xyz
     many = np.tile([[0.0, -0.6, 1.0]], (3 * MAX_POINTS, 1))
     assert len(camera_packet(0.0, many)) == DEPTH.size + 12 * MAX_POINTS <= 65507
-    # the Orin's costmap moved into this odom by the bases' difference; refused if the headings differ
-    assert anchor((1.0, 2.0, 0.5), (1.5, 1.0, 0.51), (-2.0, -1.0)) == (-1.5, -2.0)
-    assert anchor((1.0, 2.0, 0.5), (1.0, 2.0, 0.6), (0.0, 0.0)) is None
-    assert anchor((0.0, 0.0, math.pi - 0.01), (0.0, 0.0, -math.pi + 0.01), (0.0, 0.0)) == (0.0, 0.0)
+    # the Orin's costmap into this odom: same heading, only moved; turned half round, as on the robot
+    assert all(abs(a - b) < 1e-9 for a, b in zip(anchor((1.0, 2.0, 0.5), (1.5, 1.0, 0.5), (-2.0, -1.0)), (-1.5, -2.0, 0.0)))
+    # he is at (1, 0) facing +x there and at (0, 0) facing -x here: its origin (0, 0), 1 m behind him,
+    # is 1 m behind him here too, at (1, 0), and the grid's x points along this odom's +x... turned by pi
+    o = anchor((1.0, 0.0, 0.0), (0.0, 0.0, math.pi), (0.0, 0.0))
+    assert abs(o[0] - 1.0) < 1e-9 and abs(o[1]) < 1e-9 and abs(abs(o[2]) - math.pi) < 1e-9, o
     # the Orin's end reads the same layouts on the same ports
     sys.path.insert(0, __file__.rsplit('/robot/', 1)[0] + '/orin/bin')
     import importlib

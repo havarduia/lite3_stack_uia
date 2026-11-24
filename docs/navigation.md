@@ -70,8 +70,9 @@ stops it there.
 `navigate_to_pose` instead and passes each goal and cancel to the Orin over UDP
 (`orin/bin/orin_nav.py`), with the camera's points (below) and the sonars. Back come the
 goal's status (and why, when the Orin found no route: `/orin_nav/refused`), the route
-(published as `/plan`), the local costmap (as `/local_costmap/costmap`, re-anchored on
-this odom; dropped if the two odoms disagree on his heading by more than 3°), whether
+(published as `/plan`), the local costmap (as `/local_costmap/costmap`, moved and turned
+onto this odom from both computers' pose of him: the Orin's odom is FAST-LIO2's, this one leg
+odometry corrected by it, 176° apart when measured on 2026-11-24), whether
 its Nav2 is up (`/orin_nav/ready`, which `set_pose` waits for) and the command, which
 goes on `/cmd_vel`:
 
