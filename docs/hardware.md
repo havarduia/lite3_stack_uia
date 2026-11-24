@@ -109,10 +109,13 @@ the robot's UDP telemetry (port 43897) and publishes it as ROS topics:
 ### The interlock ("arming")
 
 `jy_exe` ignores every network command unless a controller heartbeat keeps
-arriving. Normally the handheld sends it. `Lite3.heartbeat_start()` sends it
-from Python instead (2 Hz), which means the robot obeys **with no handheld
-powered on**. That is convenient and also the most important safety caveat in
-the project: the terminal (Ctrl-C) becomes your stop button.
+arriving. Normally the handheld sends it. `Lite3()` sends it from Python as
+well (2 Hz, always since 2026-11-24), which means the robot obeys **with no
+handheld powered on**. That is convenient and also the most important safety
+caveat in the project: the terminal (Ctrl-C) becomes your stop button, beside the
+handheld's sticks (touching one switches him to manual mode). Losing the heartbeat
+lies him down about 3.5 s later; from a walk that nearly made him fall, which is why
+the program holds its own (the SDK's `docs/robot.md`).
 
 Even with the heartbeat, a freshly powered robot is "settled but not armed":
 the **first real command is swallowed** by `jy_exe`'s own arming sequence.

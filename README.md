@@ -52,9 +52,12 @@ stopped, even after a crash or Ctrl-C.
 
 ## Safety first
 
-- **The handheld remote is the only hardware stop.** Keep it in your hand.
-- `bot.heartbeat_start()` makes your program the controller: the robot then
-  obeys with **no handheld at all**, and your terminal (Ctrl-C) is the stop.
+- **The handheld remote is the only hardware stop.** Keep it in your hand:
+  touching a stick takes him over (manual mode) and stops any program's motion.
+- `StackRobot()` holds the heartbeat itself, so the robot obeys your program
+  with **no handheld at all**, and your terminal (Ctrl-C) is the stop. It always
+  does: with only the app's heartbeat, an app that went off mid-walk let him walk
+  on and then lie down mid-stride, nearly falling (2026-11-24).
 - Ctrl-C in any `StackRobot` program runs `estop()`, which also kills Nav2.
 - `demos/estop_nav.py` and `demo.py ... --move` **move the robot**.
 
@@ -104,8 +107,7 @@ from lite3 import Lite3Error
 from robot.stack import StackRobot
 
 with StackRobot() as bot:
-    bot.heartbeat_start()        # only if no handheld is on - YOU are now the stop
-    bot.wait_ready()
+    bot.wait_ready()             # it holds the heartbeat: with no app, YOU are the stop
     bot.stand()
     try:
         r = bot.walk(2.0, speed=0.3)

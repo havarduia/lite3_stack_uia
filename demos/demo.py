@@ -239,15 +239,14 @@ def lesson10_no_controller():
     """Running with no handheld: hold the interlock from your own script."""
     with StackRobot() as bot:
         # jy_exe only accepts commands while a controller keepalive keeps
-        # arriving. Normally that is the handheld. heartbeat_start() makes this
-        # process the controller instead, so the robot obeys with no handheld
+        # arriving. Normally that is the handheld. StackRobot() sends it too,
+        # from the moment it is made, so the robot obeys with no handheld
         # powered on at all.
         #
-        # Read that twice: while this runs, the handheld is NOT your stop.
-        # This terminal is. Ctrl-C stops the keepalive and the robot goes deaf
-        # to every network command.
+        # Read that twice: with the handheld off, this terminal is your stop
+        # (Ctrl-C). With it on, touching a stick also stops him.
         #
-        # upright() is the whole routine: heartbeat_start(), then wait_ready()
+        # upright() is the whole routine: the heartbeat if not on yet, then wait_ready()
         # - NOT instant, basic_state runs 8 -> 9 -> 1 over about two seconds
         # and a command sent inside that window is ignored - then stand(), and
         # sit() on the way out. The heartbeat is dropped by close(), after it.

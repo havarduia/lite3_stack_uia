@@ -3,7 +3,6 @@
 
     python3 ~/robot/bin/teleop.py                 # w/s drive, a/d turn, space stop, q quit
     python3 ~/robot/bin/teleop.py --speed 0.4
-    python3 ~/robot/bin/teleop.py --handheld      # real controller sends the heartbeat
     python3 ~/robot/bin/teleop.py --selftest      # key mapping only, no robot
 
 Keys are momentary: he keeps going while you hold one and stops HOLD seconds
@@ -41,7 +40,6 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--speed', type=float, default=0.3, help='m/s, max %.1f' % MAX_SPEED)
     p.add_argument('--yaw', type=float, default=0.6, help='rad/s, max %.1f' % MAX_YAW_RATE)
-    p.add_argument('--handheld', action='store_true', help='do not send our own heartbeat')
     p.add_argument('--force', action='store_true', help='ignore the battery floor')
     p.add_argument('--selftest', action='store_true')
     args = p.parse_args()
@@ -84,7 +82,7 @@ def main():
     saved = termios.tcgetattr(fd)
     # with StackRobot: close() is the final halt, the disarm and the ordered rclpy
     # teardown, on every way out.
-    with StackRobot() as bot, bot.upright(heartbeat=not args.handheld):
+    with StackRobot() as bot, bot.upright():
         try:
             print('w/s drive  a/d turn  space stop  +/- speed  q quit')
             tty.setcbreak(fd)

@@ -1,0 +1,380 @@
+% Section 2 of the report, standalone so it compiles on its own (same preamble as section1.tex).
+% To move it into the report: everything between \begin{document} and \end{document}.
+% Labels from Section 1 (sec:commanding, lst:recipe, sec:auto-mode, sec:listening, sec:sdk-stand,
+% sec:bridge), the later sensing section (sec:sensing) and Results (sec:results) show as ?? here.
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}\usepackage[T1]{fontenc}\usepackage{lmodern}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{tikz}\usetikzlibrary{positioning,arrows.meta,calc,fit,decorations.pathreplacing,backgrounds}
+\usepackage{booktabs,array,amssymb,caption,listings,xcolor,url,amsmath}
+\numberwithin{figure}{section}\numberwithin{table}{section}
+\AtBeginDocument{\numberwithin{lstlisting}{section}}
+\captionsetup{font=small,labelfont=bf}
+
+\definecolor{motion}{HTML}{DCE8F5}
+\definecolor{percep}{HTML}{E3F1E0}
+\definecolor{outside}{HTML}{F3F3F3}
+\definecolor{accent}{HTML}{C0504D}
+
+\tikzset{
+  comp/.style={draw, rounded corners=3pt, thick, inner sep=6pt, align=center},
+  prog/.style={draw, rounded corners=2pt, fill=white, font=\small, align=center, minimum height=8mm, inner sep=4pt},
+  dev/.style={draw, rounded corners=3pt, fill=outside, font=\small, align=center, minimum height=9mm, inner sep=5pt},
+  link/.style={-{Stealth[length=2.2mm]}, thick},
+  wire/.style={thick},
+  lbl/.style={font=\footnotesize, align=center},
+}
+
+\lstset{language=Python, basicstyle=\ttfamily\small, columns=fullflexible, keepspaces=true,
+  commentstyle=\color{gray}\itshape, keywordstyle=\bfseries, frame=lines, xleftmargin=1em,
+  showstringspaces=false}
+
+\begin{document}
+\setcounter{section}{1}
+
+\section{The Interface}
+\label{sec:interface}
+
+This section describes the program interface that was built on the findings of
+Section~\ref{sec:commanding}. Subsection~\ref{sec:goals} states what the interface was designed to do, and
+Subsection~\ref{sec:structure} shows how it is put together. Subsections~\ref{sec:state} to~\ref{sec:stopping}
+go through its parts in the order a program uses them: connecting and reading the robot's state, holding
+the controller, standing up, walking and stopping. Subsection~\ref{sec:errors} lists how each silent failure
+is handled, Subsection~\ref{sec:testing} describes the fake robot used for testing, and
+Subsection~\ref{sec:interface-summary} sums up.
+
+\subsection{Design Goals}
+\label{sec:goals}
+
+The recipe in Listing~\ref{lst:recipe} makes the robot walk, but it leaves the program to get every
+detail right. The robot gives no warning when something goes wrong: a command sent in the wrong mode or at
+the wrong moment is simply ignored, or does the opposite of what was intended. The interface was designed
+around five goals that follow from this:
+
+\begin{enumerate}
+  \item \textbf{No silent failures.} Every known reason for the robot to ignore a command is either fixed
+    automatically, or the call stops with an error message that says what is wrong and what to do.
+  \item \textbf{Every motion ends with the robot stopped.} This holds however the motion ends: when it is
+    done, when it is interrupted, and when the program crashes.
+  \item \textbf{State as plain values.} The robot's posture, battery level and position can be read at any
+    time, like ordinary variables.
+  \item \textbf{Calls that wait and report.} A call such as \texttt{walk(2.0)} returns when the motion is
+    over, and reports how far the robot actually moved and why it stopped.
+  \item \textbf{No ROS~2 knowledge needed.} A program that only walks the robot should not have to deal
+    with topics, message types or the ROS~2 machinery behind them.
+\end{enumerate}
+
+\subsection{Structure}
+\label{sec:structure}
+
+The interface is a Python package called \texttt{lite3}, which runs on the perception computer. A program
+uses it through one class, \texttt{Lite3}. Creating a \texttt{Lite3} object connects to the robot, and its
+methods (\texttt{stand}, \texttt{walk}, \texttt{turn} and so on) control it. Behind the single class, the
+code is split into small files by topic, as shown in Figure~\ref{fig:structure}.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=5mm and 6mm]
+  \node[dev, minimum width=60mm] (user) {A program: \texttt{bot.stand()}, \texttt{bot.walk(2.0)}};
+  % the class and its parts
+  \node[prog, below=12mm of user, xshift=-36mm] (post) {Posture\\ \footnotesize heartbeat, stand, sit,\\ \footnotesize auto mode, tricks};
+  \node[prog, right=of post] (mot) {Motion\\ \footnotesize walk, turn, steer,\\ \footnotesize halt};
+  \node[prog, right=of mot] (core) {Robot\\ \footnotesize connection, state,\\ \footnotesize stop, close};
+  \node[prog, below=5mm of post] (udp) {Commands\\ \footnotesize the short UDP\\ \footnotesize commands};
+  \node[prog, below=5mm of core] (st) {State\\ \footnotesize what the state\\ \footnotesize numbers mean};
+  \begin{scope}[on background layer]
+    \node[comp, fill=percep, fit=(post)(mot)(core)(udp)(st), inner sep=8pt] (cls) {};
+  \end{scope}
+  \node[font=\small\bfseries, anchor=south west] at (cls.north west) {\texttt{Lite3} (perception computer)};
+  \draw[link] (user) -- (user |- cls.north);
+  % robot side
+  \node[prog, below=24mm of udp] (jy) {Walking controller\\ (\texttt{jy\_exe})};
+  \node[prog, below=24mm of st, minimum width=26mm] (br) {ROS~2 bridge};
+  \begin{scope}[on background layer]
+    \node[comp, fill=motion, fit=(jy), inner sep=6pt] (mc) {};
+  \end{scope}
+  \node[font=\small\bfseries, anchor=north] at (mc.south) {Motion computer};
+  \draw[link] (udp) -- node[lbl, left] {short commands,\\ heartbeat (UDP)} (mc.north -| udp);
+  \coordinate (mid) at ($(mot.south)!0.55!(mot.south |- br.north)$);
+  \draw[link] (mot.south) -- (mid) -| node[lbl, pos=0.25, below] {velocity (ROS~2)} ([xshift=-5mm]br.north);
+  \draw[link] ([xshift=5mm]br.north) -- node[lbl, right] {state, odometry\\ (ROS~2)} ([xshift=5mm]br.north |- st.south);
+  \draw[link] ([yshift=2mm]br.west) -- node[lbl, above] {velocity (UDP)} ([yshift=2mm]br.west -| jy.east);
+  \draw[link] ([yshift=-2mm]br.west -| jy.east) -- node[lbl, below] {state (UDP)} ([yshift=-2mm]br.west);
+\end{tikzpicture}
+\caption{The parts of the interface and the two ways its commands reach the robot. Short commands (posture,
+mode, heartbeat) go straight to the walking controller over UDP; velocity and state go through the vendor's
+ROS~2 bridge, as in Listing~\ref{lst:recipe}.}
+\label{fig:structure}
+\end{figure}
+
+Commands reach the robot in the two ways found in Section~\ref{sec:commanding}. Posture, mode and heartbeat
+are short commands sent straight to the walking controller over UDP. Each is twelve bytes: a command code,
+a value (used for joystick positions) and a zero. Velocity goes through the vendor's ROS~2 bridge, which also
+brings the robot's state back. The codes the interface uses are listed in Table~\ref{tab:codes}. Each is
+marked with where it came from, since some were recorded from the app with tcpdump, as described in
+Subsection~\ref{sec:listening}, and some were taken from a third-party project on GitHub and not trusted
+until they had been seen working on this robot. Besides these, the interface can play six built-in tricks,
+also from the third-party project, of which only the dance has been run on this robot.
+
+\begin{table}[htbp]
+\centering
+\caption{The short commands the interface sends to the walking controller, and where each was found.}
+\label{tab:codes}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Code & Meaning & Found \\
+\midrule
+\texttt{0x21040001} & heartbeat, at least twice a second & recorded from the app \\
+\texttt{0x21010202} & stand up or lie down (switches between the two) & recorded from the app \\
+\texttt{0x21010C03} & auto mode: follow velocity commands & recorded from the app \\
+\texttt{0x21010C02} & manual mode: follow the app's joysticks only & third-party \\
+\texttt{0x21010D05}, \texttt{0D06} & enter and leave posture mode & recorded from the app \\
+\texttt{0x21010130} & body pitch in posture mode (value: stick position) & recorded from the app \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Posture mode is a mode for tilting the body while standing still, used to point the depth camera up or
+down. It mattered for the design because, in posture mode, the robot reports that it is standing but
+ignores every velocity command.
+
+\subsection{Connecting and Reading State}
+\label{sec:state}
+
+When a \texttt{Lite3} object is created, it first selects the messaging layer that ROS~2 runs on. ROS~2
+can use several such layers, and with the default one the program found none of the robot's topics and
+waited forever without an error. The interface therefore always selects the one the robot's own programs
+use, before ROS~2 is loaded.
+
+The object then starts listening to the topics the bridge publishes: the robot's state, its odometry (the
+robot's own estimate of how far it has moved, calculated from the leg movements), the body's tilt, the two
+ultrasonic distance sensors and the positions of the app's joysticks. A background thread, a part of the
+program that runs alongside the rest, reads these topics 25 times a second and keeps only the newest
+message from each. The state is then available as plain values such as \texttt{bot.battery},
+\texttt{bot.pose} and \texttt{bot.standing}, which meets the third and fifth goals: a program reads them
+like variables, without writing any ROS~2 code. If no state arrives within ten seconds, creating the object
+fails with a message that names the likely cause, which is that the bridge is not running.
+
+The most important value is a single state number that the walking controller reports. It says whether the
+robot is standing, lying, or on its way between the two. Its values, found by watching it while the robot
+was used, are listed in Table~\ref{tab:states}. The battery level is not part of the bridge's original
+messages; the bridge was changed to pass it on, since the robot refuses to stand on a low battery without
+saying why.
+
+\begin{table}[htbp]
+\centering
+\caption{The values of the robot's state number that the interface relies on.}
+\label{tab:states}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Value & Meaning \\
+\midrule
+6  & standing \\
+1  & lying down, after a command to lie down \\
+8  & lying down, no heartbeat: commands are ignored \\
+98 & lying down, just after the robot was switched on \\
+9  & on the way from 8 to 1; not safe to command \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Holding the Controller}
+\label{sec:heartbeat}
+
+As found in Subsection~\ref{sec:listening}, the walking controller ignores network commands unless a
+heartbeat keeps arriving. When a \texttt{Lite3} object is created, it starts a background thread that sends
+the heartbeat twice a second, the same rate as the app, until the object is closed.
+
+This has a consequence for safety. With the heartbeat running, the robot obeys the program with no app
+connected, so the program, and the person running it, take the app's place as the stop. The app is not
+made useless by this: touching one of its joysticks still stops the robot, as described in
+Subsection~\ref{sec:stopping}.
+
+An earlier version only sent the heartbeat when a program asked for it, and left it to the app otherwise.
+This was changed after a test showed what the robot does when the heartbeat stops in the middle of a walk:
+it keeps walking for a few seconds and then lies down where it is, which nearly tipped it over (the test is
+described in Section~\ref{sec:results}). With the heartbeat left to the app, this would happen if the app
+were switched off, or its battery ran out, while a program was driving the robot. With the program holding
+its own heartbeat, the heartbeat only stops when the program itself stops, and then its velocity commands
+stop with it.
+
+\subsection{Posture}
+\label{sec:posture}
+
+Standing up looks like a single command, but Section~\ref{sec:commanding} left two problems with it. The
+stand command switches between standing and lying, so sending it to a standing robot lays it down. And the
+first stand command after the robot is switched on is ignored. Listing~\ref{lst:stand} shows how
+\texttt{stand()} deals with both.
+
+\begin{lstlisting}[float=htbp, captionpos=b, label=lst:stand,
+  caption={How \texttt{stand()} works, simplified. The robot is only toggled from a settled lying state, and the toggle is sent once more if it was swallowed.}]
+def stand():
+    if state() == STANDING:
+        return                                   # already up: sending would lie it down
+    if state() not in LYING:
+        raise Lite3Error('on the way between postures, not toggling')
+    check_battery()                              # it refuses below 20 % without a word
+    for attempt in (1, 2):
+        send(STAND_TOGGLE)
+        if wait_until_standing(give_up_if_still_lying_after=2.0):
+            return
+        # still lying: the first toggle after power-on only woke the controller
+    raise Lite3Error('did not stand up - is the app or the heartbeat running?')
+\end{lstlisting}
+
+The method first reads the state number. If the robot is already standing, nothing is sent, so calling
+\texttt{stand()} twice is harmless. If the robot is neither standing nor settled lying down, nothing is sent
+either, since a toggle in the middle of a movement could lay it down. Only from a settled lying state is the
+toggle sent. If the robot is still lying two seconds later, the first toggle was swallowed, and it is sent
+once more. A shorter wait would risk sending the second toggle to a robot that was in fact getting up,
+which would lay it down again. The method \texttt{sit()} works the same way in reverse: it stops any
+movement, and toggles only a robot that is standing.
+
+Auto mode is handled in a simpler way. As found in Subsection~\ref{sec:auto-mode}, the robot does not
+report which mode it is in. The interface therefore never tries to find out. Every motion call leaves
+posture mode and switches on auto mode before it moves, whether or not this is needed.
+
+\subsection{Motion}
+\label{sec:motion}
+
+All motion goes through one loop, shown in Figure~\ref{fig:loop}. The calls \texttt{walk},
+\texttt{strafe} (sideways), \texttt{turn} and \texttt{steer} differ only in what they do inside one cycle
+of it. Before the loop starts, the robot must be standing, the battery high enough and the odometry
+arriving; if not, the call stops with an error and the robot does not move. The loop then runs every
+50~milliseconds. In each cycle it first runs the safety checks, which are the same for every call, and then
+sends the call's velocity and checks whether the goal has been reached.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[node distance=6mm, box/.style={prog, minimum width=46mm}]
+  \node[box] (in) {Checks before moving\\ \footnotesize standing, battery, odometry};
+  \node[box, below=of in] (auto) {Leave posture mode,\\ switch on auto mode};
+  \node[box, below=of auto] (safe) {Safety checks\\ \footnotesize app joysticks, cancel, odometry,\\ \footnotesize tilt, time limit};
+  \node[box, below=of safe] (cyc) {One cycle of the call\\ \footnotesize send velocity, wait 50\,ms,\\ \footnotesize goal reached?};
+  \node[box, below=10mm of cyc, fill=percep] (halt) {Stop: zero velocity\\ \footnotesize sent 20 times};
+  \node[box, below=of halt] (out) {Return the report\\ \footnotesize reason, start, end, distance};
+  \draw[link] (in) -- (auto);
+  \draw[link] (auto) -- (safe);
+  \draw[link] (safe) -- node[lbl, right] {all clear} (cyc);
+  \draw[link] (cyc.west) -- ++(-8mm,0) |- node[lbl, pos=0.25, left] {not yet} (safe.west);
+  \draw[link] (cyc) -- node[lbl, right] {goal reached} (halt);
+  \draw[link] (safe.east) -- ++(10mm,0) |- node[lbl, pos=0.4, right] {reason\\ to stop} (halt.east);
+  \draw[link] (halt) -- (out);
+  \draw[link, dashed, accent] ([xshift=34mm,yshift=-6mm]cyc.east) node[lbl, above, text=black] {crash or\\ Ctrl-C} |- ([yshift=-2mm]halt.east);
+\end{tikzpicture}
+\caption{The one motion loop behind \texttt{walk}, \texttt{strafe}, \texttt{turn} and \texttt{steer}. The
+loop runs every 50\,ms. However it ends, also by a crash, the robot is sent zero velocity before the call
+returns or the error passes on.}
+\label{fig:loop}
+\end{figure}
+
+The safety checks stop the motion if a person moves the app's joysticks, if another part of the program
+cancels the motion, if the odometry has stopped arriving for half a second, if the body is tilted more than
+30 degrees, or if the call has run for 30 seconds. Each of these gives a different reason, which is returned
+with the result. A walk that stops early is not treated as an error: the program reads the reason, as in
+Listing~\ref{lst:walk}.
+
+\begin{lstlisting}[float=htbp, captionpos=b, label=lst:walk,
+  caption={A program using the interface. Stopping short is reported, not raised; a refusal to start is raised.}]
+with Lite3() as bot:                  # connects, starts the heartbeat, auto mode
+    bot.stand()
+    try:
+        r = bot.walk(2.0, speed=0.3)
+        print('moved %.2f m: %s' % (r['moved'], r['reason']))   # e.g. 'target reached'
+        bot.turn_deg(90)              # positive is left
+    except Lite3Error as e:
+        print('refused:', e)          # the message says what to do
+    finally:
+        bot.sit()
+\end{lstlisting}
+
+The velocity a call sends is checked before it is sent. A walking speed above 0.6 metres per second is
+refused, rather than quietly reduced. In \texttt{steer}, where an algorithm computes a new velocity every
+cycle, the velocity is held within the limits, and a value that is not a valid number is sent as zero. This
+last case matters more than it seems: limiting such a value with the usual minimum and maximum functions in
+Python can give the highest allowed speed instead of a stop.
+
+Turning has one more detail. The robot keeps turning for a short moment after it is told to stop, so
+\texttt{turn()} sends the stop slightly before the target is reached, waits for the robot to settle, and
+reports where it actually ended up. The angle is added up cycle by cycle, so turns of more than half a
+revolution are counted correctly. Walking forward also stops for obstacles seen by the depth camera; how the
+camera's view is turned into distances is described in Section~\ref{sec:sensing}.
+
+\subsection{Stopping Safely}
+\label{sec:stopping}
+
+The second goal, that every motion ends with the robot stopped, is met in four layers. First, the motion
+loop sends zero velocity on every way out, as shown in Figure~\ref{fig:loop}. In Python this is a
+\texttt{finally} block, which runs even when the program crashes inside the loop. The zero velocity is sent
+twenty times over 0.4 seconds, since the bridge's channel does not guarantee that a single message arrives.
+
+Second, pressing Ctrl-C in the terminal runs an emergency stop: it cancels any running motion and sends
+zero velocity. While the stop runs, further presses of Ctrl-C are ignored, so pressing it twice cannot cut
+the stop short. Another part of the program, such as a web page used to control the robot, can stop a
+motion at any time with \texttt{cancel()}.
+
+Third, when the app is connected, it is a stop of its own. As soon as one of its joysticks is touched, the app sends
+the command for manual mode, and from then on the robot ignores velocity from the program and follows the
+joysticks instead. Touching a joystick therefore works as an emergency stop that needs no button. The
+interface is built not to fight this. It switches on auto mode only when a motion call starts, never during
+one, and the safety check described in Subsection~\ref{sec:motion} sees the joystick move and ends the call
+with the reason that the app took over. A program that wants to move the robot again has to start a new call.
+
+Fourth, closing the interface is done in a fixed order. The robot is stopped first, and only then is the
+heartbeat stopped, since a robot that loses its heartbeat while it is still moving can tip over. The
+ROS~2 parts are then shut down in an order that avoids crashes found during development. The object is meant
+to be used in a \texttt{with} block, as in Listing~\ref{lst:walk}, which closes it in this order however the
+block is left. Beyond these, the walking controller stops the robot by itself when velocity commands stop
+arriving, so a program that is killed outright still leaves the robot standing still.
+
+\subsection{Errors}
+\label{sec:errors}
+
+Table~\ref{tab:errors} lists the ways the robot fails silently that were found in
+Section~\ref{sec:commanding} and while building the interface, and what the interface does about each. All
+refusals are raised as one type of error, \texttt{Lite3Error}, with a message that names the cause.
+
+\begin{table}[htbp]
+\centering
+\caption{Silent failures of the robot, and how the interface handles them.}
+\label{tab:errors}
+\begin{tabular}{@{}p{0.42\linewidth}p{0.52\linewidth}@{}}
+\toprule
+The robot & The interface \\
+\midrule
+ignores velocity in manual mode & switches on auto mode before every motion \\
+ignores velocity in posture mode & leaves posture mode before every motion \\
+ignores velocity when not standing & refuses to start, and says to call \texttt{stand()} \\
+ignores everything without a heartbeat & sends its own heartbeat from the start \\
+ignores the first stand after power-on & sends the stand command once more \\
+lies down on a stand command when standing & sends nothing to a standing robot \\
+refuses to stand on a low battery & refuses below 20\,\%, with the battery level \\
+gives no state with the wrong ROS~2 setup & selects the right messaging layer; if no state comes, says which program to check \\
+keeps walking on the last command after a crash & sends zero velocity on every way out \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Testing Without the Robot}
+\label{sec:testing}
+
+The package includes a fake robot, which replaces the connection to the real one with an imitation whose
+position follows the velocity it is sent, on a clock that only moves forward when the code waits. No message
+leaves the computer, so a program built on the interface can be tested with no robot and no risk, and a
+ten-second walk is checked in a fraction of a second. This is how the guarantee of Subsection~\ref{sec:stopping}
+was checked, since making a program crash in the middle of a walk is not something to try on the real robot:
+the tests check that every motion, however it ends, leaves zero velocity behind. The code described in the
+later sections was tested against the same fake robot before it was run on the robot.
+
+\subsection{Summary}
+\label{sec:interface-summary}
+
+The interface turns the recipe of Listing~\ref{lst:recipe} into a single class that a program can use
+without knowing how the robot is commanded underneath. Each silent failure found in
+Section~\ref{sec:commanding} is either fixed automatically or reported with a message that says what to do,
+and every motion ends with the robot stopped, also after a crash. The interface covers the robot as it came
+from the manufacturer: posture, walking, turning, its state, the depth camera and the speaker. It is
+published as a separate package, so that it can be used on any Lite3. Everything added to the robot later
+in this project, such as the lidar and navigation, builds on this class rather than changing it.
+
+\end{document}

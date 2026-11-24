@@ -141,8 +141,7 @@ class Robot:
 
     def __init__(self, emit):
         self.emit = emit                        # emit(dict) -> all pages
-        self.bot = StackRobot(estop_on_sigint=False)
-        self.bot.heartbeat_start()
+        self.bot = StackRobot(estop_on_sigint=False)     # holds the heartbeat itself
         self.work = ThreadPoolExecutor(1)       # motion: one thing at a time
         self.talk_pool = ThreadPoolExecutor(1)  # talking runs beside motion
         self.speaker = None                     # the link to the Orin's voice, kept open between Says
