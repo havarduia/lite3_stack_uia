@@ -1,4 +1,4 @@
-"""sonar_range - the two ultrasonic sensors as sensor_msgs/Range, for Nav2.
+"""sonar_range - the two ultrasonic sensors as sensor_msgs/Range, for the Orin's Nav2 (robot/orin_nav.py).
 
 Republishes Jetson2Motion's bare Float64 readings at 20 Hz on /sonar/front
 and /sonar/rear, with static TFs from base_link. Started with Nav2 by
@@ -34,10 +34,6 @@ MIN_RANGE = 0.27   # just under its 0.28 floor, so 0.28 still marks
 # intermittently (the edge), one at 27-32 deg steadily. 4.5 / 4.7 = no echo.
 FOV = 1.15         # rad, ~+-33 deg
 RATE_HZ = 20.0
-# Written on the first publish. env/start_nav2_map.sh waits for it before
-# launching Nav2, so the range layer never starts its no-readings clock
-# before there are readings.
-READY_FILE = '/tmp/sonar_range.ready'
 
 
 class SonarRange(Node):
@@ -46,7 +42,6 @@ class SonarRange(Node):
         self._stamp = None           # latest odometry stamp (steady clock)
         self._last = {}
         self._pubs = {}
-        self._ready = False
         # depth 1, read RATE_HZ times a second in main(): these come at 160 Hz
         # and taking every message cost most of a core
         self.create_subscription(Odometry, ODOM_TOPIC, self._odom, 1)
@@ -74,9 +69,6 @@ class SonarRange(Node):
         if self._stamp is None:
             return
         for name, value in self._last.items():
-            if not self._ready:
-                open(READY_FILE, 'w').close()
-                self._ready = True
             r = Range()
             r.header.stamp = self._stamp
             r.header.frame_id = 'sonar_' + name

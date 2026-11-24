@@ -211,29 +211,6 @@ Visualization Manager:
       Color Scheme: costmap
       Draw Behind: false
       Enabled: true
-      Name: Global costmap
-      Topic:
-        Depth: 5
-        Durability Policy: Transient Local
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /global_costmap/costmap
-      Update Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /global_costmap/costmap_updates
-      Use Timestamp: false
-      Value: true
-    - Alpha: 0.5
-      Binary representation: false
-      Binary threshold: 100
-      Class: rviz_default_plugins/Map
-      Color Scheme: costmap
-      Draw Behind: false
-      Enabled: true
       Name: Local costmap
       Topic:
         Depth: 5
@@ -286,13 +263,6 @@ Visualization Manager:
       Line Width: 0.029999999329447746
       Topic:
         Value: /plan
-      Value: true
-    - Class: rviz_default_plugins/Path
-      Name: Nav2 local path
-      Enabled: true
-      Color: 120; 220; 140
-      Topic:
-        Value: /local_plan
       Value: true
     - Class: rviz_default_plugins/Marker
       Name: Goal

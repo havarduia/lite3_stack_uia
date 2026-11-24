@@ -19,8 +19,7 @@ from lite3 import ACTIONS, Lite3
 from lite3.robot import RobotNode, ignoring_sigint
 from nav_msgs.msg import OccupancyGrid
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from rclpy.serialization import deserialize_message
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Bool, Float64MultiArray, String
 
 from . import locate
 from .maps import Maps
@@ -33,41 +32,29 @@ ODOM_TOPIC = 'odom_fused'
 
 
 class StackNode(RobotNode):
-    """The SDK's node, plus Nav2's costmaps and robot/locate.py."""
-
-    @property
-    def grid(self):
-        """Nav2's global costmap, decoded from the newest bytes the first time it is asked for."""
-        raw = self._grid_raw
-        if raw is None:
-            return None
-        if self._grid[0] is not raw:
-            self._grid = (raw, deserialize_message(raw, OccupancyGrid))
-        return self._grid[1]
-
-    @grid.setter
-    def grid(self, value):
-        """Only None: nav_stop() forgets the costmap."""
-        if value is not None:
-            raise ValueError('grid comes from /global_costmap/costmap; only None can be set')
-        self._grid_raw, self._grid = None, (None, None)
+    """The SDK's node, plus the Orin's Nav2 (through robot/orin_nav.py) and robot/locate.py."""
 
     def __init__(self, odom_topic=ODOM_TOPIC):
         super().__init__(odom_topic)
         latched = QoSProfile(depth=1)
         latched.reliability = ReliabilityPolicy.RELIABLE
         latched.durability = DurabilityPolicy.TRANSIENT_LOCAL
-        self._grid_raw, self._grid = None, (None, None)
-        self.local_grid = None      # Nav2's local costmap: a turn on the spot checks it (nav.turn_blocked)
+        self.grid = None            # the loaded floor's map, walls grown by half his width (maps.floor_grid)
+        # The Orin's local costmap, in odom, and when it came: a turn on the spot checks it (nav.turn_blocked)
+        self.local_grid, self.local_grid_at = None, None
+        self.ready_at = -1e9        # when the Orin last said its Nav2 is up
+        self.refused = (None, -1e9)     # the Orin's word on the last goal it refused, and when
         # Map mode: what robot/locate.py last said, when, and the odometry of that moment.
         self.loc, self.loc_time, self.loc_odom = None, 0.0, None
-        # Kept as bytes, decoded on use (grid): a floor like the arcade's takes 0.43 s to
-        # decode on the Xavier, every 2 s, on the thread that also reads /localized.
-        self.create_subscription(OccupancyGrid, '/global_costmap/costmap',
-                                 lambda b: setattr(self, '_grid_raw', b), latched, raw=True)
-        self.create_subscription(OccupancyGrid, '/local_costmap/costmap',
-                                 lambda m: setattr(self, 'local_grid', m), latched)
+        self.create_subscription(OccupancyGrid, '/local_costmap/costmap', self._local_cb, latched)
+        self.create_subscription(Bool, '/orin_nav/ready',
+                                 lambda m: m.data and setattr(self, 'ready_at', time.monotonic()), 2)
+        self.create_subscription(String, '/orin_nav/refused',
+                                 lambda m: setattr(self, 'refused', (m.data, time.monotonic())), latched)
         self.create_subscription(Float64MultiArray, locate.TOPIC, self._loc_cb, 1)
+
+    def _local_cb(self, m):
+        self.local_grid, self.local_grid_at = m, time.monotonic()
 
     def _loc_cb(self, m):
         if len(m.data) == len(locate.Reading._fields):
@@ -83,8 +70,8 @@ class StackRobot(Maps, Nav, Voice, Lite3):
         kw.setdefault('odom_topic', ODOM_TOPIC)
         super().__init__(**kw)
 
-    # Ctrl-C alone is not a stop once Nav2 drives: controller_server is another
-    # process publishing its own cmd_vel.
+    # Ctrl-C alone is not a stop once Nav2 drives: robot/orin_nav.py is another
+    # process publishing the Orin's cmd_vel.
     def estop(self, disarm=False):
         """Stop as hard as software can: ignore SIGINT meanwhile, cancel the Nav2
         goal, halt, kill Nav2 (it would keep publishing), then the SDK's estop
@@ -103,14 +90,12 @@ class StackRobot(Maps, Nav, Voice, Lite3):
             return super().estop(disarm)
 
     def destroy_clients(self):
-        for name in ('_nav_client', '_plan_client'):
-            client = getattr(self, name)
-            if client is not None:
-                try:
-                    client.destroy()
-                except Exception:
-                    pass
-                setattr(self, name, None)
+        if self._nav_client is not None:
+            try:
+                self._nav_client.destroy()
+            except Exception:
+                pass
+            self._nav_client = None
 
     def status(self):
         return (super().status() + ' nav2=' + ('up' if self.nav_running else 'down')

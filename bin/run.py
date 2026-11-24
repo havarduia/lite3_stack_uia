@@ -47,7 +47,7 @@ ORIN_ENV = 'source /opt/ros/humble/setup.bash; export ROS_DOMAIN_ID=42'
 # hotspot, and the replay runs on the Orin, so the bag stays there.
 # The rest are the Orin Nav2's costmap inputs and its local costmap, to tell which source draws a ghost.
 ORIN_TOPICS = ('/cloud_registered /Odometry /lio/gravity /livox/imu'
-               ' /terrain_h /depth_grid /depth_points /sonar/front /sonar/rear /local_costmap/costmap'
+               ' /terrain_h /camera_points /local_costmap/voxel_grid /depth_points /sonar/front /sonar/rear /local_costmap/costmap'
                # the collision monitor's own view: its poses and what goes in and comes out (slow zone, 2026-11-13)
                ' /tf /tf_static /cmd_vel_nav /cmd_vel')
 # The laptop's own ROS, walled off from any robot (memory: laptop testing).

@@ -26,11 +26,16 @@ from robot.stack import ODOM_TOPIC, StackNode, StackRobot  # noqa: E402
 
 
 class World(T.World):
-    """The SDK's fake robot, plus what the stack listens to: Nav2's costmaps and
-    what robot/locate.py last said (with the odometry of that moment). None of
-    it until a floor is loaded and he is placed (on_floor())."""
+    """The SDK's fake robot, plus what the stack listens to: the floor's map, the
+    Orin's local costmap and word on its Nav2, and what robot/locate.py last said
+    (with the odometry of that moment). None of it until a floor is loaded and he
+    is placed (on_floor())."""
     grid = loc = loc_stopped = None
-    local_grid = None           # Nav2's local costmap, in odom: what a turn on the spot checks first
+    local_grid = None           # the Orin's local costmap, in odom: what a turn on the spot checks first
+    local_grid_at = None        # when it came (the fake clock); None: just now
+    nav_up = True               # the Orin says its Nav2 is up
+    refused = (None, -1e9)
+    ready_at = property(lambda self: time.monotonic() if self.nav_up else -1e9)
     loc_odom = (0.0, 0.0, 0.0)
     loc_time = property(lambda self: self.t if self.loc_stopped is None else self.loc_stopped)
 
@@ -40,17 +45,11 @@ class World(T.World):
     def create_publisher(self, kind, topic, depth):     # /initialpose
         return types.SimpleNamespace(publish=POSES.append)
 
-    def create_client(self, srv, name):     # the costmap's clear service: a 'stale' mark goes, a wall stays
-        def call(request):
-            CLEARS.append(name)
-            NO_ROUTE[:] = [v for v in NO_ROUTE if v != 'stale']
-            return types.SimpleNamespace(done=lambda: True)
-        return types.SimpleNamespace(wait_for_service=lambda timeout_sec: True, call_async=call)
-
 
 class Bot(StackRobot):
     nav_running = True                      # no pgrep: the pretend Nav2 below is always up
     floor = 'lab'                           # nor for the floor that is loaded
+    _grid_floor = 'lab'                     # its map is the World's grid, not read from a file
 
 
 def run(move, bot=Bot, **setup):
@@ -60,8 +59,7 @@ def run(move, bot=Bot, **setup):
 
 
 GOALS, CANCELS = [], []      # every goal pose the pretend Nav2 was sent, and when one was cancelled
-NO_ROUTE = []                # put anything in it: the pretend planner finds no way
-CLEARS = []                  # every time the global costmap was asked to forget its marks
+NO_ROUTE = []                # put anything in it: the pretend Orin refuses goals, no way there
 POSES = []                   # every pose he was told he is at
 EARLY = []                   # one entry per goal the pretend Nav2 calls succeeded at once, unmoved
 
@@ -73,23 +71,12 @@ def pretend_nav2(arrives):
     made = []
     del GOALS[:], CANCELS[:]
 
-    def planner(node):
-        """The planner alone: a straight line from where he is to the point asked for."""
-        def plan(msg):
-            (x0, y0, _), to = node.bot.map_pose, msg.pose.pose.position
-            line = [] if NO_ROUTE else [types.SimpleNamespace(pose=types.SimpleNamespace(position=types.SimpleNamespace(
-                x=x0 + (to.x - x0) * i / 20.0, y=y0 + (to.y - y0) * i / 20.0))) for i in range(21)]
-            answer = types.SimpleNamespace(done=lambda: True, result=lambda: types.SimpleNamespace(
-                status=nav.SUCCEEDED, result=types.SimpleNamespace(path=types.SimpleNamespace(poses=line))))
-            handle = types.SimpleNamespace(accepted=True, get_result_async=lambda: answer)
-            return types.SimpleNamespace(done=lambda: True, result=lambda: handle)
-        return types.SimpleNamespace(wait_for_server=lambda timeout_sec: True, send_goal_async=plan)
-
     def client(node, action, name):
-        if name == 'compute_path_to_pose':
-            return planner(node)
         goal = {}
         def done():
+            if goal['refused']:
+                node.refused = ('no route', time.monotonic())   # robot/orin_nav.py says why, beside the abort
+                return True
             if goal['cancelled'] or goal['early']:
                 return True
             if arrives is None or node.t < goal['sent'] + arrives:
@@ -100,22 +87,21 @@ def pretend_nav2(arrives):
             return True
         result = types.SimpleNamespace(
             done=done,
-            result=lambda: types.SimpleNamespace(status=nav.CANCELED if goal['cancelled'] else nav.SUCCEEDED))
+            result=lambda: types.SimpleNamespace(status=nav.ABORTED if goal['refused'] else
+                                                 nav.CANCELED if goal['cancelled'] else nav.SUCCEEDED))
         handle = types.SimpleNamespace(accepted=True, get_result_async=lambda: result,
                                        cancel_goal_async=lambda: CANCELS.append(node.t) or goal.update(cancelled=True))
         made.append(name)
         return types.SimpleNamespace(
             wait_for_server=lambda timeout_sec: True,
             send_goal_async=lambda msg: GOALS.append(msg.pose) or goal.update(
-                sent=node.t, cancelled=False, pose=msg.pose, early=bool(EARLY and EARLY.pop())) or types.SimpleNamespace(
+                sent=node.t, cancelled=False, pose=msg.pose, early=bool(EARLY and EARLY.pop()),
+                refused=bool(NO_ROUTE)) or types.SimpleNamespace(
                 done=lambda: True, result=lambda: handle))
 
     rclpy.action.ActionClient = client
     sys.modules['nav2_msgs'] = sys.modules['nav2_msgs.action'] = types.SimpleNamespace(
-        NavigateToPose=types.SimpleNamespace(Goal=types.SimpleNamespace),
-        ComputePathToPose=types.SimpleNamespace(Goal=types.SimpleNamespace))
-    sys.modules['nav2_msgs.srv'] = types.SimpleNamespace(
-        ClearEntireCostmap=types.SimpleNamespace(Request=types.SimpleNamespace))
+        NavigateToPose=types.SimpleNamespace(Goal=types.SimpleNamespace))
     return made
 
 
@@ -124,8 +110,8 @@ def boom():
 
 
 def floor_costmap():
-    """Nav2's global costmap in map mode: 10 x 10 m in the map frame, free
-    but for a wall along x = 8 m."""
+    """The floor's map as a costmap (maps.floor_grid): 10 x 10 m in the map frame,
+    free but for a wall along x = 8 m."""
     cells = [0] * 10000
     for row in range(100):
         cells[row * 100 + 80] = 100
@@ -194,9 +180,29 @@ def check_stack():
     gone = []
     bot = Bot.__new__(Bot)
     bot._nav_client = types.SimpleNamespace(destroy=lambda: gone.append('nav'))
-    bot._plan_client = types.SimpleNamespace(destroy=lambda: gone.append('plan'))
     bot.destroy_clients()
-    assert gone == ['nav', 'plan'] and bot._nav_client is None and bot._plan_client is None, gone
+    assert gone == ['nav'] and bot._nav_client is None, gone
+
+
+def check_floor_grid(folder):
+    """maps.floor_grid on a small picture: 10 x 6 cells of 0.1 m, a wall down x = 0.5 m, grey (never
+    mapped) in the top row, free elsewhere."""
+    w, h = 10, 6
+    px = bytearray([254] * (w * h))
+    for row in range(h):
+        px[row * w + 5] = 0                     # the wall
+    for col in range(w):
+        px[col] = 205                           # the top row is the map's far edge: y = 0.5 to 0.6 m
+    with open(os.path.join(folder, 'map.pgm'), 'wb') as f:
+        f.write(b'P5\n%d %d\n255\n' % (w, h) + bytes(px))
+    with open(os.path.join(folder, 'map.yaml'), 'w') as f:
+        f.write('image: map.pgm\nresolution: 0.1\norigin: [0.0, 0.0, 0.0]\nnegate: 0\n'
+                'occupied_thresh: 0.65\nfree_thresh: 0.15\n')   # as get_map.sh's maps
+    g = maps.floor_grid(os.path.join(folder, 'map.yaml'))
+    at = lambda x, y: nav.cell(g, x, y)        # noqa: E731
+    assert g.header.frame_id == 'map' and (g.info.width, g.info.height) == (w, h)
+    assert at(0.55, 0.2) == 100 and at(0.35, 0.2) == 100 and at(0.25, 0.2) == 0, (at(0.35, 0.2), at(0.25, 0.2))
+    assert at(0.15, 0.55) == 100 and at(0.15, 0.2) == 0 and at(1.5, 0.2) is None      # grey is a wall; off it, None
 
 
 def main():
@@ -217,6 +223,8 @@ def main():
     assert r['reason'] == 'target reached', r                         # out of reach: turns
     r, _, _ = run(lambda b: b.turn_deg(-130), local_grid=grid_with('odom', [(0.2, 0.1)]))
     assert r['reason'] == 'target reached', r                         # under him already: not his turn's doing
+    r, _, _ = run(lambda b: b.turn_deg(-130), local_grid=beside, local_grid_at=-10.0)
+    assert r['reason'] == 'target reached', r                         # the Orin's costmap stopped coming: not believed
     assert nav.sweep_hit(beside, (0.0, 0.0, 0.0), math.radians(-20)) is None      # a small turn misses it
     assert nav.sweep_hit(beside, (0.0, 0.0, 0.0), math.radians(-90)) is not None
     r, halted, sent = run(lambda b: b.steer(lambda: (9.0, -9.0), limit=1.0))
@@ -276,16 +284,18 @@ def main():
 
     # a Go: one action client however many goals, and three ways it ends
     made = pretend_nav2(arrives=2.0)
-    r, _, _ = run(lambda b: [b.goto(1.0, check=False) for _ in range(3)])
+    r, _, _ = run(lambda b: [b.goto(1.0, check=False) for _ in range(3)], **on_floor())
     assert r == [nav.SUCCEEDED] * 3 and len(made) == 1, (r, made)
-    assert sent_goal() == ('odom', 1.0, 0.0, 0), sent_goal()     # no costmap yet: nothing to move it onto
     pretend_nav2(arrives=None)                                   # a Nav2 that never gets there
-    r, halted, _ = run(lambda b: b.goto(1.0, check=False), at=(1.0, lambda w: w.bot.goto_cancel()))
+    r, halted, _ = run(lambda b: b.goto(1.0, check=False), at=(1.0, lambda w: w.bot.goto_cancel()), **on_floor())
     assert r == nav.CANCELED and halted, r                       # cancelled from another thread
-    r, halted, _ = run(lambda b: b.goto(1.0, check=False), at=(1.0, lambda w: setattr(w.bot, '_goal_handle', None)))
+    r, halted, _ = run(lambda b: b.goto(1.0, check=False), at=(1.0, lambda w: setattr(w.bot, '_goal_handle', None)),
+                       **on_floor())
     assert r == nav.CANCELED and halted, r                       # estop() dropped it: no waiting on a dead Nav2
-    r, halted, _ = run(lambda b: b.goto(1.0, check=False, timeout=5.0))
+    r, halted, _ = run(lambda b: b.goto(1.0, check=False, timeout=5.0), **on_floor())
     assert isinstance(r, Lite3Error) and 'timed out' in str(r) and halted, r
+    r, _, sent = run(lambda b: b.goto(1.0, check=False))
+    assert isinstance(r, Lite3Error) and not sent, r             # not placed: the Orin takes goals on the map only
 
     # --- map mode: Nav2 plans in the map frame, and so every goal must be in it ---
     pretend_nav2(arrives=2.0)
@@ -295,6 +305,12 @@ def main():
     assert r == (100, 0, None), r           # odom points, looked up on the map: the wall at (8.05, 5), him, and (-4, 5) off it
     r, _, _ = run(lambda b: (b.cost_at(8.05, 5.0, frame='map'), b.cost_at(2.0, 5.0, frame='map')), **on_floor())
     assert r == (100, 0), r
+    # where the Orin's local costmap reaches, it says (what the camera and lidar see now); stale, the map does
+    r, _, _ = run(lambda b: (b.cost_at(0.0, -0.35), b.cost_at(5.375, 5.0, frame='map'), b.cost_at(0.0, -3.05)),
+                  local_grid=beside, **on_floor())
+    assert r == (100, 100, 100), r          # him at (0, 0) in odom is (5, 5) on the map; the wall is off the local one
+    r, _, _ = run(lambda b: b.cost_at(0.0, -0.35), local_grid=beside, local_grid_at=-10.0, **on_floor())
+    assert r == 0, r
     r, _, _ = run(lambda b: (b.localized, b.map_pose), **on_floor())
     assert r[0] is True and all(abs(a - b) < 1e-9 for a, b in zip(r[1], (5.0, 5.0, math.pi / 2))), r
     # he has walked 1 m since locate.py last spoke: the map pose has gone with him
@@ -304,12 +320,10 @@ def main():
     assert r == (False, None), r            # not placed: neither
 
     # go to a point on the map
-    r, _, _ = run(lambda b: (b.go_to_point(2.0, 5.0), b._node.odom[2]), **on_floor())
-    assert r[0] == nav.SUCCEEDED and sent_goal() == ('map', 2.0, 5.0, 180), sent_goal()  # facing the way he came
-    # the way starts off to his left: he turns to face along it himself first (Nav2 here just stands, 2026-10-09)
-    assert abs(r[1] - math.pi / 2) < 0.15, r
-    r, _, sent = run(lambda b: b.go_to_point(5.5, 7.0), **on_floor())
-    assert r == nav.SUCCEEDED and not any(c[2] for c in sent), sent                     # roughly ahead: no turn of his own
+    r, _, sent = run(lambda b: b.go_to_point(2.0, 5.0), **on_floor())
+    assert r == nav.SUCCEEDED and sent_goal() == ('map', 2.0, 5.0, 180), sent_goal()  # facing the way he came
+    # the way starts off to his left: no turn of his own first (that was for RPP); MPPI turns him as he goes
+    assert not any(c[2] for c in sent), sent
     r, _, _ = run(lambda b: (b.go_to_point(2.0, 5.0, yaw_deg=0), b._node.odom[2]), **on_floor())
     assert r[0] == nav.SUCCEEDED and abs(r[1] + math.pi / 2) < 0.1, r                   # and turned to the heading asked for
     # the final turn to a heading looks too (global costmap in map mode): facing +y at (5, 5), turning to 0
@@ -318,15 +332,10 @@ def main():
     r, _, sent = run(lambda b: (b.go_to_point(5.05, 5.0, yaw_deg=0), b._node.odom[2]), **walled)
     assert r[0] == nav.SUCCEEDED and r[1] == 0.0 and not any(c[2] for c in sent), (r, sent)
     r, _, _ = run(lambda b: b.go_to_point(5.05, 5.0), **on_floor())
-    assert r == nav.SUCCEEDED and len(GOALS) == 4, (r, len(GOALS))                      # already there: no goal sent
+    assert r == nav.SUCCEEDED and len(GOALS) == 3, (r, len(GOALS))                      # already there: no goal sent
     pretend_nav2(arrives=None)
     r, halted, _ = run(lambda b: b.go_to_point(2.0, 5.0), at=(9.0, lambda w: w.bot.goto_cancel()), **on_floor())
     assert r == nav.CANCELED and halted, r
-    # cancelled in the turn to face the way, before Nav2 has a goal: the turn ends and no goal goes out
-    before = len(GOALS)
-    r, halted, _ = run(lambda b: (b.go_to_point(2.0, 5.0), b._node.odom[2]),
-                       at=(1.0, lambda w: w.bot.goto_cancel()), **on_floor())
-    assert r[0] == nav.CANCELED and halted and abs(r[1]) < 1.0 and len(GOALS) == before, (r, len(GOALS) - before)
 
     def refused(move, **setup):
         before = len(GOALS)
@@ -344,14 +353,13 @@ def main():
     assert 'wall' in refused(lambda b: b.go_to_point(8.05, 5.0), **on_floor())
     assert 'numbers' in refused(lambda b: b.go_to_point(float('nan'), 5.0), **on_floor())
     assert 'not standing' in refused(lambda b: b.go_to_point(2.0, 5.0), state={'basic': 1, 'battery': 80}, **on_floor())
+    # cut off: the Orin refuses the goal at once (it has cleared its costmap and asked twice), and says why
+    pretend_nav2(arrives=2.0)
     NO_ROUTE.append(True)
-    assert 'no route' in refused(lambda b: b.go_to_point(2.0, 5.0), **on_floor())       # cut off: refused before a step
-    assert len(CLEARS) == 1, CLEARS         # ... after one look at a costmap without its old marks
-    del NO_ROUTE[:], CLEARS[:]
-    NO_ROUTE.append('stale')                # a door seen shut and since opened: the second look finds the way
-    r, _, _ = run(lambda b: b.route_to(2.0, 5.0), **on_floor())
-    assert isinstance(r, list) and len(CLEARS) == 1 and not NO_ROUTE, (r, CLEARS)
-    del CLEARS[:]
+    r, halted, sent = run(lambda b: b.go_to_point(2.0, 5.0), **on_floor())
+    assert isinstance(r, Lite3Error) and 'no route' in str(r) and halted and not any(any(c) for c in sent), r
+    del NO_ROUTE[:]
+    pretend_nav2(arrives=None)
 
     # Nav2 calls a goal succeeded at once, far from it (seen after a cancelled goal): sent again, believed only once there
     pretend_nav2(arrives=2.0)
@@ -377,12 +385,14 @@ def main():
     assert isinstance(r, Lite3Error) and len(POSES) == 2, (r, len(POSES))     # but is, in the end
     del POSES[:]
 
-    # placed, but the first global costmap is late (a big floor): say so, not "Nav2 did not finish starting"
-    late = maps.COSTMAP_WAIT_S
-    maps.COSTMAP_WAIT_S = 0.3
-    r, _, _ = run(lambda b: b.set_pose(5.0, 5.0, 90, timeout=2.0), **dict(on_floor(), grid=None))
-    maps.COSTMAP_WAIT_S = late
-    assert isinstance(r, Lite3Error) and str(r).startswith('placed at') and 'no global costmap' in str(r), r
+    # placed, but the Orin's Nav2 is late (a big floor's costmap): say so, not "Nav2 did not finish starting"
+    late = maps.ORIN_READY_S
+    maps.ORIN_READY_S = 0.3
+    r, _, _ = run(lambda b: b.set_pose(5.0, 5.0, 90, timeout=2.0), nav_up=False, **on_floor())
+    maps.ORIN_READY_S = late
+    assert isinstance(r, Lite3Error) and str(r).startswith('placed at') and 'was not up' in str(r), r
+    r, _, _ = run(lambda b: b.set_pose(5.0, 5.0, 90, timeout=2.0), **on_floor())
+    assert r is True, r
     del POSES[:]
 
     # lost on the way: the goal is dropped and he stops, he does not walk on a wrong position
@@ -392,9 +402,6 @@ def main():
     del CANCELS[:]
     r, halted, _ = run(lambda b: b.go_to_point(2.0, 5.0), at=(9.0, lambda w: setattr(w, 'loc_stopped', w.t)), **on_floor())
     assert isinstance(r, Lite3Error) and 'lost' in str(r) and halted and CANCELS, r   # locate.py itself died
-    before = len(GOALS)                     # ... or while he was still turning to face the route: no goal goes out
-    r, halted, _ = run(lambda b: b.go_to_point(2.0, 5.0), at=(1.0, lambda w: setattr(w, 'loc_stopped', w.t)), **on_floor())
-    assert isinstance(r, Lite3Error) and 'lost' in str(r) and halted and len(GOALS) == before, r
 
     # places: saved where he stands or at a point, gone to by name
     pretend_nav2(arrives=2.0)
@@ -420,6 +427,7 @@ def main():
             open(os.path.join(places.ROOT, 'hall', name), 'w').close()
         r, _, _ = run(lambda b: b.floors())
         assert r == ['hall'] and places.floors() == ['hall', 'lab'], r
+        check_floor_grid(os.path.join(places.ROOT, 'hall'))
     places.ROOT = real_root
 
     # stopping a stack this process launched does not wait on its zombie (real time, real process)

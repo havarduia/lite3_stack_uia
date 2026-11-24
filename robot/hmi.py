@@ -223,7 +223,7 @@ class Robot:
 
     def cancel(self, why='from the panel'):
         """End a Go that is under way. Nav2 stays up, unlike E-STOP."""
-        # a Go has no goal out while it plans and turns to face the way: busy says it is one
+        # a Go has no goal out for a moment before Nav2 takes it (and while it turns to a final heading): busy says it is one
         going = self.bot.goto_cancel() or (self.busy or '').startswith('goto')
         if going:
             self.log('cancelled ' + why, 'warn')

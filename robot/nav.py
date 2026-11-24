@@ -21,7 +21,7 @@ from .lio_relay import wrap
 # The stack runs in its own process group (setsid) and is killed by that
 # group: killing by name misses its children, or reaches the
 # static_transform_publisher the services use. docs/navigation.md.
-NAV_MARKERS = ('planner_server', 'controller_server', 'robot.sonar_range', 'robot.orin_nav')
+NAV_MARKERS = ('start_nav2_map', 'robot.sonar_range', 'robot.orin_nav')
 # Never kill a group holding one of these. Executables, not words: the
 # launch line itself says launch_realsense:=false.
 NAV_NEVER = ('jetson2motion', 'transfer_ros2', 'start_transfer',
@@ -29,6 +29,7 @@ NAV_NEVER = ('jetson2motion', 'transfer_ros2', 'start_transfer',
              'voa_ros2')
 
 LETHAL = 99
+LOCAL_STALE_S = 1.0     # the Orin's local costmap comes twice a second (robot/orin_nav.py)
 SUCCEEDED, CANCELED, ABORTED = 4, 5, 6      # NavigateToPose result status, as goto() returns it
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # the scripts in env/ move with the code
 
@@ -45,6 +46,16 @@ def status_text(status):
 FOOTPRINT_HALF = (0.35, 0.25)
 OBSTACLE = 100
 SWEEP_STEP = math.radians(5)
+
+
+def cell(grid, x, y):
+    """A costmap's value at (x, y) in its frame, or None off it."""
+    i = grid.info
+    cx = int(math.floor((x - i.origin.position.x) / i.resolution))
+    cy = int(math.floor((y - i.origin.position.y) / i.resolution))
+    if not (0 <= cx < i.width and 0 <= cy < i.height):
+        return None
+    return int(grid.data[cy * i.width + cx])
 
 
 def under(grid, pose, half=FOOTPRINT_HALF):
@@ -121,7 +132,7 @@ def _kill_group(pgid, timeout, wait):
 
 
 class Nav:
-    """Needs self._node.grid, pose, turn() and halt(), from StackRobot."""
+    """Needs _floor_grid(), self._node's local costmap, pose, turn() and halt(), from StackRobot."""
     _nav_client = None
     _goal_handle = None
 
@@ -164,7 +175,7 @@ class Nav:
             killed += 1
         time.sleep(1.0)
         # after the sleep: a costmap the dead stack sent last could still land just after the kill
-        self._node.grid = self._node.local_grid = None
+        self._node.local_grid = None
         return killed
 
     def nav_start(self, timeout=40.0, floor=None):
@@ -188,7 +199,7 @@ class Nav:
                              stdin=subprocess.DEVNULL)
         if not self._wait(lambda: self.nav_running, timeout):
             raise Lite3Error('nav2 did not come up; see /tmp/nav2.log')
-        # No global costmap yet: it comes once he is placed (set_pose)
+        # The Orin's Nav2 is up only once he is placed (set_pose waits for it)
         if not self._wait(lambda: self._loc() is not None, timeout):
             raise Lite3Error('nav2 is up but robot/locate.py says nothing; see /tmp/nav2.log')
         groups = self._nav_groups()
@@ -198,11 +209,18 @@ class Nav:
                 'survived. Call nav_stop() and retry.' % len(groups))
         return True
 
+    def _local_grid(self):
+        """The Orin's local costmap (camera and lidar, in odom), or None if it is not coming."""
+        n = self._node
+        g, at = getattr(n, 'local_grid', None), getattr(n, 'local_grid_at', None)
+        return g if g is not None and (at is None or time.monotonic() - at < LOCAL_STALE_S) else None
+
     def turn_blocked(self, radians):
         """Why a turn on the spot by `radians` would put his body on an obstacle, or None.
-        Checks the local costmap (depth, sonars and lidar), else the global one (the map
-        and the lidar). With neither, says nothing: there is nothing to check."""
-        g = getattr(self._node, 'local_grid', None) or self._node.grid
+        Checks the Orin's local costmap (camera and lidar), else the floor's map. With
+        neither, says nothing: there is nothing to check."""
+        local = self._local_grid()
+        g = local or self._floor_grid()
         if g is None:
             return None
         frame = g.header.frame_id
@@ -213,21 +231,23 @@ class Nav:
         if hit is None:
             return None
         return 'turning %+.0f deg would touch something %.0f deg in (%s costmap) - not turning' % (
-            math.degrees(radians), math.degrees(abs(hit)), 'local' if g is getattr(self._node, 'local_grid', None) else 'global')
+            math.degrees(radians), math.degrees(abs(hit)), 'local' if g is local else 'floor map')
 
     def cost_at(self, x, y, frame='odom'):
-        """Global costmap cost at a point given in odom, or on the floor map
-        (frame='map'). None if off the map."""
-        g = self._node.grid
+        """Cost (0-100) at a point given in odom, or on the floor map (frame='map'): the Orin's
+        local costmap where it covers the point (what the camera and lidar see now), else the
+        floor's map (walls grown by half his width). None if off the map."""
+        local = self._local_grid()
+        if local is not None:
+            ox, oy, _ = self._in_frame(x, y, 0.0, frame, 'odom') if frame != 'odom' else (x, y, 0.0)
+            c = cell(local, ox, oy)
+            if c is not None:
+                return c
+        g = self._floor_grid()
         if g is None:
-            raise Lite3Error('no global costmap - is nav2 running?')
+            raise Lite3Error('no floor map - load a floor first')
         x, y, _ = self._in_nav_frame(x, y, 0.0, frame)
-        i = g.info
-        cx = int((x - i.origin.position.x) / i.resolution)
-        cy = int((y - i.origin.position.y) / i.resolution)
-        if not (0 <= cx < i.width and 0 <= cy < i.height):
-            return None
-        return g.data[cy * i.width + cx]
+        return cell(g, x, y)
 
     def cost_ahead(self, out_to=3.5, step=0.25, settle=0):
         """[(distance, cost), ...] along the robot's heading. settle: re-read until
@@ -334,13 +354,12 @@ class Nav:
         if not client.wait_for_server(timeout_sec=10.0):
             raise Lite3Error('navigate_to_pose action server not available')
 
-        # Nav2 takes the numbers as being in the frame it plans in, whatever the
-        # header says, so in map mode an odom point is moved onto the map here.
+        # The Orin's Nav2 takes goals on the map only: an odom point is moved onto it here.
         nx, ny, nyaw = self._in_nav_frame(gx, gy, gyaw, frame)
         if frame != 'odom':
             gx, gy, gyaw = self._in_frame(gx, gy, gyaw, frame, 'odom')
         goal = PoseStamped()
-        goal.header.frame_id = self._nav_frame()
+        goal.header.frame_id = 'map'
         goal.header.stamp = self._node.get_clock().now().to_msg()
         goal.pose.position.x, goal.pose.position.y = float(nx), float(ny)
         goal.pose.orientation.z = math.sin(nyaw / 2.0)

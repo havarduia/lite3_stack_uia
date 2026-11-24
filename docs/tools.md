@@ -63,9 +63,9 @@ The Orin part comes over a second ssh link (`LITE3_ORIN`, default
 map -> odom, and its topics under `/orin/`. Checked 2026-11-04: the two
 `base_link`s agreed on the map to 5 mm and 0.03°. The Orin's `/tf` is never
 thinned: thinning it kept dropping odom -> base_link. Without the Orin link
-the rest of the view still works. The global costmap is in the preset but off and not relayed: on a
-big floor (the arcade map is 200 x 125 m) it is megabytes a second over
-ssh. Add `/global_costmap/costmap` on the command line to have it anyway.
+the rest of the view still works. The Orin's global costmap is not relayed: on a
+big floor (the arcade map is 200 x 125 m) it is megabytes a second over ssh. Perception
+has no Nav2 of its own since 2026-11-24; its `/local_costmap/costmap` is the Orin's, sent back.
 
 rviz's **2D Goal Pose** and **2D Pose Estimate** go back up the same ssh
 link: the robot end hands them to the panel (`robot/hmi.py`, at
@@ -113,8 +113,8 @@ model, so the computer box on the back is not shown. No network on that first ru
 so and shows the small ones. Delete the folder to go back to them.
 
 **What to expect.**
-- `sensors` also shows **what he intends**: Nav2's path (`/plan`, and the
-  controller's `/local_plan`), and its goal as an arrow on the floor. The
+- `sensors` also shows **what he intends**: Nav2's path (`/plan`, the Orin's
+  route), and its goal as an arrow on the floor. The
   goal comes from the panel (`/intent/goal`), so the panel has to be
   running; the laptop end draws it as a marker that fades 1.5 s after the
   last one, so a reached goal disappears. (Markers are made on the

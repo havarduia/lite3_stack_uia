@@ -1,7 +1,8 @@
 # Nav2 Humble on the Orin, the robot's only Nav2 that drives; started by nav.sh.
 # bt_navigator (Humble's default tree: replan once a second, recoveries) -> planner_server
 # (Smac 2D on the floor map) -> controller_server (MPPI, tuned on the shadow walks of October)
-# -> collision_monitor -> /cmd_vel, which orin_nav.py sends to perception.
+# -> collision_monitor -> /cmd_vel, which orin_nav.py sends to perception. The depth camera
+# (perception's) is the local costmap's STVL layer: ros-humble-spatio-temporal-voxel-layer.
 # The map comes from perception (env/start_nav2_map.sh copies it); map -> odom from orin_nav.py.
 bt_navigator:
   ros__parameters:
@@ -192,8 +193,8 @@ local_costmap:
       global_frame: odom
       robot_base_frame: base_link
       rolling_window: true
-      # StaticLayer reads use_maximum from the costmap, not the layer (Humble). Without this the camera's
-      # depth_layer overwrote the lidar's terrain_layer with its free cells: the lidar drew nothing here.
+      # Without this a camera layer's free cells overwrote the lidar's terrain_layer (the StaticLayer
+      # before STVL, 2026-11): the lidar drew nothing here.
       use_maximum: true
       width: 6
       height: 6
@@ -203,7 +204,7 @@ local_costmap:
       footprint_padding: 0.0
       # No sonar layer (2026-11-04): a ~30 deg cone draws walls too wide in doorways; the sonars
       # only stop or slow him in the collision monitor, for the glass the lidar and camera see through.
-      plugins: [terrain_layer, depth_layer, inflation_layer]
+      plugins: [terrain_layer, stvl_layer, inflation_layer]
       terrain_layer:
         plugin: nav2_costmap_2d::ObstacleLayer
         observation_sources: obstacles ground
@@ -213,12 +214,45 @@ local_costmap:
         ground: {topic: /terrain_h, data_type: PointCloud2, sensor_frame: base_link, marking: false,
                  clearing: true, min_obstacle_height: -1.0, max_obstacle_height: 2.0,
                  raytrace_max_range: 4.0}
-      depth_layer:
-        plugin: nav2_costmap_2d::StaticLayer
-        map_topic: /depth_grid
-        map_subscribe_transient_local: true
-        subscribe_to_updates: false
+      # The depth camera, sent by perception (orin_nav.py: /camera_points, only what is ahead of his nose).
+      # Perception's settings until 2026-11-24, when its own Nav2 went. The camera is for the lidar's blind
+      # spot ahead; decay 2.5 s (15 s kept bridge glare under him ~20 s), and his footprint is cleared.
+      stvl_layer:
+        plugin: spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer
+        observation_sources: camera_points
+        enabled: true
+        publish_voxel_map: true       # /local_costmap/voxel_grid: orin_nav.py makes /depth_points of it
+        voxel_size: 0.1
+        combination_method: 1         # max, with use_maximum: the lidar's marks stay
+        mark_threshold: 0
+        update_footprint_enabled: true
+        track_unknown_space: false
+        decay_model: 0                # linear
+        voxel_decay: 2.5
+        mapping_mode: false
         transform_tolerance: 0.3
+        camera_points:
+          topic: /camera_points
+          data_type: PointCloud2
+          sensor_frame: camera_depth_optical_frame    # orin_nav.py publishes it: the frustum to clear
+          marking: true
+          clearing: true
+          observation_persistence: 0.5
+          expected_update_rate: 0.5
+          min_obstacle_height: 0.08   # safely under his normal-gait step (15 cm is H-step mode only)
+          max_obstacle_height: 1.0
+          inf_is_valid: false
+          min_z: 0.25                 # nearer the D435 cannot measure (a false match on the bridge railing, 2026-11-13)
+          max_z: 3.0
+          obstacle_range: 3.0         # D435 reliable indoor range
+          vertical_fov_angle: 1.01    # D435 depth, ~58 deg
+          vertical_fov_padding: 0.0
+          horizontal_fov_angle: 1.50  # ~86 deg
+          decay_acceleration: 5.0
+          filter: voxel
+          voxel_min_points: 3
+          clear_after_reading: false
+          model_type: 0               # depth camera (frustum)
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
         inflation_radius: 0.45

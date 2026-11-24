@@ -12,33 +12,25 @@ shadow steps of the migration are gone (git history has them, and
   drives: bt_navigator (Humble's default tree), Smac 2D on the floor map, MPPI, and a
   collision monitor that has the last word on every command. Its map -> odom is its
   own, from the 3D localizer's fixes (`cloud_locate.py` sends each to both computers).
-- **Perception** (`env/start_nav2_map.sh`, `env/nav2_map.launch.py`): the map server,
-  both costmaps and the NavFn planner, for the panel and the checks before a goal
-  (`cost_at`, `turn_blocked`, `route_to`), plus `robot/locate.py` and
-  `robot/orin_nav.py`. No bt_navigator. Its controller_server is there for the local
-  costmap only: it still loads RPP from the vendor file but never gets a goal, and its
-  `cmd_vel` is remapped to `/rpp/cmd_vel`, which nothing reads. The parameters are the
-  vendor's `dr_nav2_mapless` file with our patch (`env/nav2-mapless-lite3.patch`), made
-  into map mode at each start by `env/nav2_map_params.py`.
+  Its local costmap holds the lidar (terrainAnalysis) and the depth camera (an STVL
+  layer); before bt_navigator gets a goal, `orin/bin/orin_nav.py` asks the planner once
+  and refuses a goal it finds no way to.
+- **Perception** (`env/start_nav2_map.sh`): no Nav2 of its own since 2026-11-24.
+  `robot/orin_nav.py` (the link to the Orin, the camera's points to it),
+  `robot/sonar_range.py` (the sonars) and `robot/locate.py` (is he placed). Its checks
+  read the floor's map and the Orin's local costmap, sent back:
 
-Perception's costmaps, built live from the sensors on top of the map:
+| Check | Reads |
+|---|---|
+| a map goal or a place in a wall (`go_to_point`, `save_place`) | the floor's map (`maps.floor_grid`): walls grown by 0.2 m, half his width, and the grey never mapped are lethal |
+| no route (`go_to_point`) | the Orin: it plans, empties its global costmap once (a door seen shut from further off than the lidar clears stays shut there) and plans again; still none, it refuses at once, without the tree's recoveries |
+| a turn on the spot (`turn_blocked`), `cost_at`, `cost_ahead` | the Orin's local costmap (camera and lidar, 6 x 6 m, twice a second) where it reaches and is under 1 s old, else the floor's map |
 
-| | Global costmap | Local costmap |
-|---|---|---|
-| Frame, size | `map`, the whole floor, 5 cm | `odom`, 8 × 8 m rolling, 10 cm |
-| Layers | map → scan layer (lidar) → inflation | STVL (depth camera) → range layer (sonars) → scan layer → inflation |
-
-- **STVL** (Spatio-Temporal Voxel Layer) stores depth-camera points in a 3D
+- **STVL** (Spatio-Temporal Voxel Layer, on the Orin) stores depth-camera points in a 3D
   voxel grid that **decays**: 2.5 s since 2026-11-04 (it was 15 s, which kept
   bridge glare under him for 20 s; the camera is for the blind spot ahead, the
-  sides are the lidar's). Its voxels are what the Orin gets as the camera.
-- **Range layer**: the sonars ([Sonars → Nav2 (robot/sonar_range.py)](api.md#sonars--nav2-robotsonar_rangepy)).
-- **Scan layer** (2026-10-08): the lidar, as the flat `/scan` of [Lidar and FAST-LIO2 odometry (robot/lio_relay.py)](lidar.md),
-  marking and clearing, used out to 3 m: the floor is only about 0.19 m under
-  the scan's lower edge and a pitching body tips far beams into it. Trap: the
-  per-source `max_obstacle_height` defaults to 0.0, which throws every point
-  away without a word in the log; it is set to 2.0.
-- **Inflation**: 0.45 m (at 0.30 the planner failed next to box corners in 2
+  sides are the lidar's), clears what the camera now sees empty, and clears his footprint.
+- **Inflation** (local): 0.45 m (at 0.30 the planner failed next to box corners in 2
   of 3 runs), `cost_scaling_factor` 8.0 (at 3.0 the cost barely faded across
   the 0.45 m and aisles between tables looked blocked).
 
@@ -76,8 +68,12 @@ stops it there.
 
 `robot/orin_nav.py` serves
 `navigate_to_pose` instead and passes each goal and cancel to the Orin over UDP
-(`orin/bin/orin_nav.py`). Back come the goal's status, the route (published as
-`/plan`) and the command, which goes on `/cmd_vel`:
+(`orin/bin/orin_nav.py`), with the camera's points (below) and the sonars. Back come the
+goal's status (and why, when the Orin found no route: `/orin_nav/refused`), the route
+(published as `/plan`), the local costmap (as `/local_costmap/costmap`, re-anchored on
+this odom; dropped if the two odoms disagree on his heading by more than 3°), whether
+its Nav2 is up (`/orin_nav/ready`, which `set_pose` waits for) and the command, which
+goes on `/cmd_vel`:
 
 - clamped to -0.2..0.5 m/s and ±0.8 rad/s, no strafe;
 - only while the goal runs here: a cancel, an estop or the goal's end stops it at once;
@@ -99,12 +95,15 @@ start he had 11 obstacle points within 1.2 m where 1.5 m gave about 300 (nodecay
 was put back. Until this is solved properly: nobody within 1.5 m of him when he starts a walk.
 
 The Orin's local costmap has the lidar (CMU terrainAnalysis, `clearDyObs` on) and, from
-perception, the depth camera: `orin_nav.py` gets the voxels perception's own STVL keeps
-(`/local_costmap/voxel_grid`, 5 Hz, 0.08–0.7 m above the floor (under his normal-gait step), 2.5 s memory) placed
-around base_link and keeps only those ahead of his nose (x > 0.35 m). The camera is for
-the lidar's blind spot in front of him; beside, behind and under him is the lidar's job.
-On the Orin they become `/depth_grid` (a StaticLayer: each grid replaces the last) and,
-for the collision monitor, `/depth_points`. The sonars (`/sonar/front`, `/sonar/rear`)
+perception, the depth camera. `robot/orin_nav.py` decodes 10 of the driver's 30 clouds a second
+(`/camera/depth/color/points`, already 5 cm voxels), turns them into base_link with the fixed
+mount (`CAMERA_XYZ`, `CAMERA_PITCH`, the same numbers on both computers), keeps 0.25-3 m from
+the lens and 0.05-1.0 m above base_link, at most 5000 points (one datagram). The Orin matches
+each to its own pose of that moment, keeps only points ahead of his nose (x > 0.35 m: beside,
+behind and under him is the lidar's job) and publishes `/camera_points` for the STVL layer,
+with the camera's frames as static tf. STVL's voxels, those ahead of his nose, are the
+collision monitor's `/depth_points`. Until 2026-11-24 the STVL layer was perception's, and
+its voxels crossed at 5 Hz. The sonars (`/sonar/front`, `/sonar/rear`)
 are not in the costmap: their ~30° cone draws walls too wide in doorways, so the front
 one only stops or slows him in the collision monitor (glass). If the camera or a sonar
 stops for 1 s, the Orin sends no commands, so perception publishes zeros.
@@ -118,16 +117,18 @@ the sonar at 0.80; the lidar and camera never had a point in the zone), none sta
 Why the short memory: on the bridge (2026-11-04) afternoon sun glare on the glossy floor
 appeared as an obstacle 0.5 m ahead; with 15 s memory he stepped onto it and stood stuck
 ~20 s, the camera unable to see under him to clear it.
-The camera's points nearer than 0.25 m are dropped (`CAMERA_NEAR_M` in
-`env/nav2_map_params.py`, was 0.05): on the bridge walk of 2026-11-13 one voxel about 12 cm
+The camera's points nearer than 0.25 m are dropped (`CAMERA_NEAR` in
+`robot/orin_nav.py`, and STVL's `min_z`; was 0.05): on the bridge walk of 2026-11-13 one voxel about 12 cm
 in front of the lens, where the D435 cannot measure, came and went at (-77, -39 to -41) and
 he took 12 s over 3 m (4 "Optimizer fail"). The bridge was clear; the likely cause is a false
 stereo match on the railing's identical bars. Not walked again since the change.
-The global costmap has the map and the lidar only, as perception's.
+The Orin's global costmap has the map and the lidar only: a camera mark nobody saw on the
+lidar once closed an open doorway (`history/LIDAR_ORIN_LOG.md` section 23).
 
 ## Reading the costmap and choosing goals
 
-- `cost_at(x, y)`: cost of one cell (0 free … 99 lethal, `None` off-map).
+- `cost_at(x, y)`: cost of one cell (0 free … 99 lethal, `None` off-map), from the Orin's
+  local costmap where it reaches, else the floor's map.
 - `cost_ahead(out_to, step, settle)`: costs along the current heading. With
   `settle=N` it re-reads until two profiles a second apart agree. This is
   needed because the costmap starts empty and, with `track_unknown_space`
@@ -210,13 +211,13 @@ The same from the command line: `python3 -m robot.stack floors`,
   localizer, which searches around it.
 - **Routes are planned on the map and the lidar only.** The global
   costmap has no depth camera and no sonars (since 2026-10-14); the local
-  costmap, which steers, keeps both. With them in the global one, a depth
+  costmap, which steers, keeps the camera, and the sonars stop or slow him in the collision monitor. With them in the global one, a depth
   mark nobody saw on the lidar (it lasts 15 s) closed an open doorway
   that the map already made narrow (`history/LIDAR_ORIN_LOG.md` section 23).
 - **Two steps to start.** There is no map -> odom, and so no global
   costmap, until the Orin's localizer has placed him, so `load_floor()`
   returns with him not localized, and `set_pose()` returns when he is and
-  the global costmap has come.
+  the Orin's Nav2 is up (`/orin_nav/ready`; on a big floor its global costmap takes >30 s).
   A pose not yet taken is said again every 8 s (`POSE_AGAIN_S`), not sooner: each
   one makes the Orin's localizer search afresh, a search on a big floor takes
   2.3-2.8 s, and its own fix is too old to be used by the time it arrives, so the
@@ -228,14 +229,9 @@ The same from the command line: `python3 -m robot.stack floors`,
   (in a plain corridor, until he has gone 15 m since a fix that pinned every
   direction). `go_to()` refuses to start without it and stops, raising, if
   it is lost on the way.
-- **Facing the route.** `go_to_point()` asks the planner for the route
-  first (`route_to()`; no route, no start; before it says so it empties
-  the global costmap once and asks again, because a door seen shut from
-  further off than the lidar clears stays shut there) and, if it sets off more than
-  60° from where he faces, turns him with `turn()` before Nav2 gets the
-  goal. Left to itself the old controller stood for 20 s and then span as
-  a "recovery" (2026-10-09); kept for MPPI, not tested whether it still
-  needs it.
+- **No turn to face the route first** (removed 2026-11-24). It was there for the RPP
+  controller, which with the goal behind him stood for 20 s and then span as a
+  "recovery" (2026-10-09); MPPI's PathAngleCritic turns him along the route as he sets off.
 - **Frames.** Nav2 plans on the map, so `goal_send()` and `cost_at()` move
   an odom point onto the map themselves: `goto(forward)` is in odom and
   works unchanged. `robot/orin_nav.py` refuses a goal in any other frame.
@@ -250,7 +246,7 @@ The same from the command line: `python3 -m robot.stack floors`,
 
 A goal pressed on the panel's map (`go_point`) is spoken aloud (`robot/voice.py`'s
 `say`), from fixed
-lines in `robot/hmi.py`'s `SAY`: "On my way." once a route is found,
+lines in `robot/hmi.py`'s `SAY`: "On my way." once the goal is sent,
 "I'm here." on arrival, "I couldn't get there." when it fails or is
 refused, nothing when you cancel it.
 

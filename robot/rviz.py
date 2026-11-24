@@ -47,11 +47,10 @@ GOAL = '/intent/goal'  # from the panel (hmi.py), drawn as a marker here
 # What `sensors` on the command line stands for: what he senses, and what he intends.
 # The costmaps and paths only exist with Nav2 up, the goal with the panel running.
 SENSORS = ['/camera/depth/color/points', '/us_publisher/ultrasound_front',
-           '/us_publisher/ultrasound_distance', '/global_costmap/costmap',
-           '/local_costmap/costmap', '/plan', '/local_plan', GOAL]
-# `nav`: the floor map view. Not the global costmap: on a big floor it is megabytes a
-# second over ssh (name /global_costmap/costmap to have it anyway). /plan is the Orin's
-# route, which perception republishes.
+           '/us_publisher/ultrasound_distance', '/local_costmap/costmap', '/plan', GOAL]
+# `nav`: the floor map view. /plan is the Orin's route and /local_costmap/costmap its local
+# costmap, which perception republishes (robot/orin_nav.py). The Orin's global costmap is not
+# sent: on a big floor it is megabytes.
 NAV = ['/map', '/scan_walls', '/plan',
        '/us_publisher/ultrasound_front', '/us_publisher/ultrasound_distance', GOAL]
 # ...and from the Orin, whose Nav2 drives: the local costmap MPPI steers on, the footprint,

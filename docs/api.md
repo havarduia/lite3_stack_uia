@@ -14,7 +14,7 @@ class StackRobot(Maps, Nav, Voice, Lite3):   # Lite3 from the SDK
 |---|---|---|
 | `Lite3` | SDK `lite3/robot.py` | everything the stock robot can do |
 | `Nav` | `robot/nav.py` | `nav_start`, `nav_stop`, `nav_running`, `cost_ahead`, `cost_at`, `goto`, `goal_send`, `goto_cancel`, the turn sweep check |
-| `Maps` | `robot/maps.py` | `floors`, `load_floor`, `localized`, `map_pose`, `set_pose`, `route_to`, `go_to_point`, `go_to`, places ([navigation.md](navigation.md)) |
+| `Maps` | `robot/maps.py` | `floors`, `load_floor`, `localized`, `map_pose`, `set_pose`, `go_to_point`, `go_to`, places ([navigation.md](navigation.md)) |
 | `Voice` | `robot/voice.py` | `say()`, Kokoro on the Orin ([voice.md](voice.md)) |
 
 What `StackRobot` changes in the SDK:
@@ -91,6 +91,6 @@ well; the front sonar is kept for what the camera misses up close (< ~0.6 m,
 glass). The rear sonar is the *only* sensor behind the robot, so it keeps its
 full range.
 
-It writes `/tmp/sonar_range.ready` on first publish, and
-`start_nav2_map.sh` waits for that file before launching Nav2, otherwise
-Nav2 complains "No range readings received" on every start.
+Since 2026-11-24 they reach Nav2 only on the Orin, through `robot/orin_nav.py`: its
+collision monitor stops or slows him for what the front one sees (no range layer: the
+cone drew walls too wide in doorways).

@@ -162,7 +162,7 @@ demos/                 teaching and regression scripts
 env/                   environment, launchers, services, and patches to vendor code
   lite3_env.sh         source this first: ROS workspaces, CycloneDDS, PYTHONPATH
   *.patch              our changes to vendor code (docs/environment.md)
-  start_*.sh, *.launch.py, nav2_map_params.py   how Nav2 and the camera are started
+  start_*.sh, *.launch.py                       how Nav2 (the link to the Orin's) and the camera are started
   get_map.sh, floor_free.py, walked_free.py     fetch a floor map from the Orin and clean it
   *.service, *.conf, *.sh                       systemd units; each file's header says
                                                 which computer it is for and how to install it

@@ -194,8 +194,8 @@ def lesson8_estop():
     1. ignores further SIGINT, so a second Ctrl-C cannot abort the stop
     2. cancels the active Nav2 goal
     3. publishes a burst of zero Twists
-    4. KILLS the Nav2 stack  <- the important one: controller_server is a
-       separate process and keeps publishing cmd_vel otherwise
+    4. KILLS the Nav2 stack  <- the important one: robot/orin_nav.py is a
+       separate process and keeps publishing the Orin's cmd_vel otherwise
     5. publishes zero Twists again
 
   Measured mid-goal on the real robot: 0.000 m of coast.

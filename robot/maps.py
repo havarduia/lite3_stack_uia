@@ -9,13 +9,16 @@ import math
 import os
 import subprocess
 import time
+from types import SimpleNamespace
 
+import numpy as np
+import yaml
 from lite3 import Lite3Error
 
 from . import locate
 from . import places as place_file
 from .lio_relay import inv, join, wrap
-from .nav import CANCELED, LETHAL, SUCCEEDED, dist
+from .nav import ABORTED, LETHAL, SUCCEEDED, dist
 
 LOC_STALE_S = 3.0       # locate.py speaks twice a second; quiet this long, he does not know where he is.
                         # Was 1.5: on the 200 m arcade map the panel's ROS thread fell behind and six
@@ -24,15 +27,34 @@ POSE_AGAIN_S = 8.0      # s before a pose not yet taken is said again: longer th
 ROUTE_TIMEOUT = 300.0   # s for one go_to() at least: 30 m takes about two minutes
 ROUTE_SLOWEST = 0.2     # m/s: longer routes get their length at this speed (135 m took over 300 s, 2026-10-15).
                         # A last resort only: Nav2's progress checker catches him stuck within 10 s.
+ROUTE_DETOUR = 2.0      # a route's length, from the straight line: the route itself is the Orin's
 THERE_M = 0.2           # nearer than this the planner makes no path, and he is there anyway
 SHORT_M = 0.6           # "succeeded" further than this from the point is not believed (it stops 0.1 to 0.2 m off)
-COSTMAP_WAIT_S = 60.0   # s after he is placed for Nav2's first global costmap (arcade floor: >30 s, 2026-11-09)
-CLEAR_SETTLE_S = 2.5    # the global costmap is redrawn once a second; the map and a fresh scan are back by then
-# Nav2's controller here has nothing that rewards turning towards the path: with
-# the goal behind him it stood for 20 s, then span as a "recovery" (2026-10-09,
-# 57 s for 2 m). So he faces along the route himself before Nav2 gets the goal.
-FACE_OVER = math.radians(60)    # if its start is further off his heading than this
-FACE_AT_M = 0.5                 # judged by the route's point this far along
+ORIN_READY_S = 60.0     # s after he is placed for the Orin's Nav2 to be up (arcade floor: >30 s for a costmap, 2026-11-09)
+READY_STALE_S = 2.0     # the Orin says it twice a second
+REFUSED_WAIT_S = 0.5    # its word on a refused goal comes beside the abort, maybe just after it
+FLOOR_RECHECK_S = 2.0   # which floor is loaded is asked of the running stack (pgrep) at most this often
+WALL_GROW_M = 0.2       # half his width (the Orin's footprint): his middle stays this far off a wall
+
+
+def floor_grid(yaml_path):
+    """A floor map as a costmap in the map frame, as Nav2's map_server reads it: walls, grown by
+    WALL_GROW_M, are lethal (100), and so is the grey never mapped (routes stay on what was mapped as
+    free); the rest is 0."""
+    with open(yaml_path) as f:
+        info = yaml.safe_load(f)
+    res = float(info['resolution'])
+    x0, y0 = (float(v) for v in info['origin'][:2])
+    picture = locate.read_pgm(os.path.join(os.path.dirname(yaml_path), info['image']))
+    dark = picture / 255.0 if info.get('negate') else (255 - picture.astype(np.float32)) / 255.0
+    dark = dark[::-1]           # the picture's top row is the map's far edge: row 0 here is y0
+    wall = locate.grow((dark > float(info.get('occupied_thresh', 0.65))).copy(), int(round(WALL_GROW_M / res)))
+    blocked = wall | ~(dark < float(info.get('free_thresh', 0.25)))
+    h, w = blocked.shape
+    return SimpleNamespace(
+        header=SimpleNamespace(frame_id='map'), data=np.where(blocked, 100, 0).astype(np.int8).ravel(),
+        info=SimpleNamespace(resolution=res, width=w, height=h,
+                             origin=SimpleNamespace(position=SimpleNamespace(x=x0, y=y0))))
 
 
 class Maps:
@@ -59,6 +81,25 @@ class Maps:
         if floor is None:
             raise Lite3Error('no floor is loaded - load_floor() first')
         return floor
+
+    _grid_floor = None
+    _floor_at = -1e9
+
+    def _floor_grid(self):
+        """The loaded floor's map as a costmap (floor_grid), read once per floor; None with none loaded."""
+        now = time.monotonic()
+        if now - self._floor_at > FLOOR_RECHECK_S:
+            self._floor_at, floor = now, self.floor
+            if floor != self._grid_floor:
+                self._grid_floor, self._node.grid = floor, None
+                if floor is not None:
+                    self._node.grid = floor_grid(os.path.join(place_file.floor_dir(floor), 'map.yaml'))
+        return self._node.grid
+
+    @property
+    def nav_ready(self):
+        """The Orin's Nav2 is up and takes goals."""
+        return time.monotonic() - getattr(self._node, 'ready_at', -1e9) < READY_STALE_S
 
     def load_floor(self, name, timeout=40.0):
         """Start Nav2 on that floor's map (replacing whatever Nav2 was up). He
@@ -102,14 +143,9 @@ class Maps:
         x, y, yaw = join(fix, odom)
         return x, y, wrap(yaw)
 
-    def _nav_frame(self):
-        """The frame Nav2 plans in: its costmap says. odom until there is one."""
-        g = self._node.grid
-        return g.header.frame_id if g is not None else 'odom'
-
     def _in_nav_frame(self, x, y, yaw, frame):
-        """A pose given in 'odom' or 'map', in the frame Nav2 plans in."""
-        return self._in_frame(x, y, yaw, frame, self._nav_frame())
+        """A pose given in 'odom' or 'map', on the map: Nav2 runs on a floor map only."""
+        return self._in_frame(x, y, yaw, frame, 'map')
 
     def _in_frame(self, x, y, yaw, frame, target):
         """A pose given in 'odom' or 'map', in the other of the two."""
@@ -146,67 +182,15 @@ class Maps:
                 self._pose_pub.publish(m)
                 said = time.monotonic()
             if taken and self.localized:
-                # Placed. Goals still need the first global costmap (its frame and costs), and on
-                # a big floor that comes long after the pose: wait for it on its own clock.
-                if self._wait(lambda: self._node.grid is not None, COSTMAP_WAIT_S):
+                # Placed. Goals still need the Orin's Nav2 up, and on a big floor that comes long
+                # after the pose (its global costmap): wait for it on its own clock.
+                if self._wait(lambda: self.nav_ready, ORIN_READY_S):
                     return True
-                raise Lite3Error('placed at (%.2f, %.2f), but Nav2 sent no global costmap in %.0f s more; '
-                                 'see /tmp/nav2.log' % (x, y, COSTMAP_WAIT_S))
+                raise Lite3Error('placed at (%.2f, %.2f), but the Orin\'s Nav2 was not up %.0f s later; '
+                                 'see /tmp/nav2.log' % (x, y, ORIN_READY_S))
             time.sleep(0.2)
         raise Lite3Error('gave the pose (%.2f, %.2f, %.0f deg), but: %s' % (
             x, y, yaw_deg, self.lost_why() or 'Nav2 did not finish starting; see /tmp/nav2.log'))
-
-    _plan_client = None
-
-    _clear_client = None
-
-    def _forget_marks(self, timeout=5.0):
-        """Empty Nav2's global costmap; the map and what the sensors see now
-        come back at its next update. False if Nav2 did not do it."""
-        from nav2_msgs.srv import ClearEntireCostmap
-
-        if self._clear_client is None:
-            self._clear_client = self._node.create_client(
-                ClearEntireCostmap, '/global_costmap/clear_entirely_global_costmap')
-        if not self._clear_client.wait_for_service(timeout_sec=timeout):
-            return False
-        if not self._wait(self._clear_client.call_async(ClearEntireCostmap.Request()).done, timeout):
-            return False
-        time.sleep(CLEAR_SETTLE_S)
-        return True
-
-    def route_to(self, x, y, timeout=10.0, again=True):
-        """The way Nav2's planner finds from where he is to a map point, as
-        [(x, y), ...] on the map. Raises if there is none, having asked twice:
-        the second time with the costmap's old marks forgotten."""
-        from geometry_msgs.msg import PoseStamped
-        from nav2_msgs.action import ComputePathToPose
-        from rclpy.action import ActionClient
-
-        if self._plan_client is None:
-            self._plan_client = ActionClient(self._node, ComputePathToPose, 'compute_path_to_pose')
-        if not self._plan_client.wait_for_server(timeout_sec=timeout):
-            raise Lite3Error('the planner is not answering - is nav2 running?')
-        msg = ComputePathToPose.Goal()
-        msg.pose = PoseStamped()
-        msg.pose.header.frame_id = 'map'
-        msg.pose.header.stamp = self._node.get_clock().now().to_msg()
-        msg.pose.pose.position.x, msg.pose.pose.position.y = float(x), float(y)
-        msg.pose.pose.orientation.w = 1.0
-        msg.planner_id = 'GridBased'
-        sent = self._plan_client.send_goal_async(msg)
-        if not self._wait(sent.done, timeout) or sent.result() is None or not sent.result().accepted:
-            raise Lite3Error('the planner did not take the question')
-        answer = sent.result().get_result_async()
-        if not self._wait(answer.done, timeout):
-            raise Lite3Error('the planner did not answer in %.0f s' % timeout)
-        poses = answer.result().result.path.poses if answer.result().status == SUCCEEDED else []
-        if not poses:
-            # a mark beyond the lidar's clearing range outlives what made it: a door seen shut stays shut
-            if again and self._forget_marks():
-                return self.route_to(x, y, timeout, again=False)
-            raise Lite3Error('no route to (%.2f, %.2f): something is in the way, or it is cut off from here' % (x, y))
-        return [(p.pose.position.x, p.pose.position.y) for p in poses]
 
     def go_to_point(self, x, y, yaw_deg=None, timeout=ROUTE_TIMEOUT, say=None):
         """Navigate to a point on the floor map. Returns the action status, as
@@ -214,10 +198,10 @@ class Maps:
 
         yaw_deg: the heading to end on, in the map's frame; None leaves him
         facing the way he arrived. Refuses unless he knows where he is, and a
-        point off the map, in a wall or off the mapped floor, and one the
-        planner finds no way to. Stops, and raises, if he stops knowing where
-        he is on the way. say(what): told 'start' once he sets off, for the
-        panel to speak.
+        point off the map, in a wall or off the mapped floor (floor_grid);
+        raises when the Orin finds no way there (it refuses at once, with no
+        recoveries). Stops, and raises, if he stops knowing where he is on the
+        way. say(what): told 'start' once the goal is sent, for the panel to speak.
         """
         say = say or (lambda what: None)
         began = time.monotonic()
@@ -238,27 +222,21 @@ class Maps:
         here = self.map_pose
         status = SUCCEEDED
         if dist(here, (x, y)) >= THERE_M:
-            route = self.route_to(x, y)
-            if self._stop_at > began:       # cancelled while the planner was asked
-                return CANCELED
-            say('start')
-            ahead = next((p for p in route if dist(here, p) >= FACE_AT_M), route[-1])
-            off = wrap(math.atan2(ahead[1] - here[1], ahead[0] - here[0]) - here[2])
-            if abs(off) > FACE_OVER:
-                self.turn(off)
-                if self._stop_at > began:   # cancelled in the turn: no goal goes out
-                    return CANCELED
-                why = self.lost_why()       # a turn takes seconds; he may not know where he is any more
-                if why:
-                    raise Lite3Error('lost on the way, stopped: ' + why)
+            # No turn to face the route first (that was for RPP, 2026-10-09): MPPI's PathAngleCritic
+            # turns him along it as he sets off
             gyaw = math.atan2(y - here[1], x - here[0]) if yaw_deg is None else math.radians(yaw_deg)
-            length = sum(dist(a, b) for a, b in zip(route, route[1:]))
-            end = time.monotonic() + max(timeout, length / ROUTE_SLOWEST)
+            end = time.monotonic() + max(timeout, dist(here, (x, y)) * ROUTE_DETOUR / ROUTE_SLOWEST)
             for again in (True, False):
+                sent = time.monotonic()
                 handle = self.goal_send(x, y, gyaw, frame='map')
                 if self._stop_at > began:   # cancelled while Nav2 was taking the goal
                     handle.cancel_goal_async()
+                if again:
+                    say('start')
                 status = self._goal_wait(handle, max(0.0, end - time.monotonic()), lost=self.lost_why)
+                if status == ABORTED and self._wait(lambda: self._node.refused[1] >= sent, REFUSED_WAIT_S):
+                    raise Lite3Error('no route to (%.2f, %.2f): something is in the way, '
+                                     'or it is cut off from here' % (x, y))
                 short = dist(self.map_pose, (x, y))
                 if status != SUCCEEDED or short < SHORT_M:
                     break
