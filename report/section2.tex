@@ -40,7 +40,9 @@ Section~\ref{sec:commanding}. Subsection~\ref{sec:goals} states what the interfa
 Subsection~\ref{sec:structure} shows how it is put together. Subsections~\ref{sec:state} to~\ref{sec:stopping}
 go through its parts in the order a program uses them: connecting and reading the robot's state, holding
 the controller, standing up, walking and stopping. Subsection~\ref{sec:errors} lists how each silent failure
-is handled, Subsection~\ref{sec:testing} describes the fake robot used for testing, and
+is handled, and Subsection~\ref{sec:testing} describes the fake robot used for testing.
+Subsection~\ref{sec:choices} discusses the main design choices and the alternatives that were not chosen,
+Subsection~\ref{sec:limitations} lists what the interface does not protect against, and
 Subsection~\ref{sec:interface-summary} sums up.
 
 \subsection{Design Goals}
@@ -366,13 +368,75 @@ was checked, since making a program crash in the middle of a walk is not somethi
 the tests check that every motion, however it ends, leaves zero velocity behind. The code described in the
 later sections was tested against the same fake robot before it was run on the robot.
 
+\subsection{Design Choices}
+\label{sec:choices}
+
+Three choices shaped the interface more than any other. Each had an alternative that was considered and not
+chosen.
+
+\paragraph{A Python library, not a ROS~2 node.} The obvious alternative was to extend the vendor's ROS~2
+bridge, or to write a ROS~2 node beside it, offering stand, sit and walk as ROS~2 services that other
+programs call over the network. This would have let several programs share the robot. It would also have
+made every program that uses the robot a ROS~2 program, and split the robot's control across two processes:
+if the program giving the orders crashed, the node carrying them out would keep running. As a library, the
+interface runs inside the program that moves the robot. The stop guarantees of Subsection~\ref{sec:stopping}
+then follow from this: when the program ends, in any way, its commands and its heartbeat end with it. The
+cost is that only one program can control the robot at a time. Programs that do want ROS~2, such as the
+navigation in the later sections, still have it: the interface gives them its ROS~2 node to add their own
+topics to.
+
+\paragraph{Calls that wait until the motion is done.} A call such as \texttt{walk(2.0)} returns only when the
+motion is over. The alternative was calls that start a motion and return at once, leaving the program to
+check on it later. Waiting calls keep programs simple, since they read in the order things happen, and they
+give each motion a clear end, where the robot is stopped and the result reported. The cost is that a program
+does only one motion at a time, and something else that should stop it, such as a button on a web page, has to
+run in a separate thread and use \texttt{cancel()}. Navigation, described later, needs the opposite: it sends
+a goal and keeps checking on it while the robot walks.
+
+\paragraph{Fix what is safe to fix, refuse the rest.} For each silent failure, the interface either fixes it
+or refuses with a message. It fixes a problem itself only when the fix is safe and is what the program
+obviously meant: switching on auto mode, leaving posture mode, and sending a swallowed stand command again.
+It refuses when a fix would hide something the person running the program should know, or would do something
+they did not ask for. A walk on a robot that is lying down is refused rather than standing the robot up
+first, since standing up is a large movement of its own. A speed above the limit is refused rather than
+reduced, since a program that asks for too much has a bug that should be seen. A battery below 20~\% is
+refused rather than tried, since the robot would refuse anyway, without saying why.
+
+\subsection{Limitations}
+\label{sec:limitations}
+
+The interface does not protect against everything. The main limitations are:
+
+\begin{itemize}
+  \item \textbf{Only walking forward and turning look for obstacles.} A turn checks the side it turns to.
+    Walking backward or sideways, and motion steered with \texttt{steer}, do not use the depth camera, and
+    the camera only sees ahead. A program that uses
+    these must check the way itself, as the navigation in the later sections does.
+  \item \textbf{The stops are in software.} The only stops that do not depend on a program are touching the
+    app's joysticks and the robot's power switch. With the app switched off, the program and the person
+    running it are the only stop.
+  \item \textbf{A command that does nothing is not noticed at once.} The robot does not confirm commands, and
+    auto mode cannot be read back. If the robot ignores a motion, the call only notices that it has not moved
+    when its time limit runs out.
+  \item \textbf{Some checks have not happened on the robot.} The stop for a tilted body has never been
+    triggered on the robot, and of the built-in tricks only the dance has been tried.
+  \item \textbf{Losing the heartbeat while moving can tip the robot over.} Since the program holds the
+    heartbeat, this only happens when the program itself stops, and then its velocity commands stop too.
+    It is still the most serious way the robot can fail, and it is why the interface always stops the
+    robot before it lets the heartbeat go.
+  \item \textbf{One program at a time.} Two programs controlling the robot at once would send it conflicting
+    commands, and nothing in the interface prevents it. The web panel must be stopped before another program
+    is run.
+\end{itemize}
+
 \subsection{Summary}
 \label{sec:interface-summary}
 
 The interface turns the recipe of Listing~\ref{lst:recipe} into a single class that a program can use
 without knowing how the robot is commanded underneath. Each silent failure found in
 Section~\ref{sec:commanding} is either fixed automatically or reported with a message that says what to do,
-and every motion ends with the robot stopped, also after a crash. The interface covers the robot as it came
+and every motion ends with the robot stopped, also after a crash. Its main limits are that only walking
+forward and turning look for obstacles, and that its stops are in software. The interface covers the robot as it came
 from the manufacturer: posture, walking, turning, its state, the depth camera and the speaker. It is
 published as a separate package, so that it can be used on any Lite3. Everything added to the robot later
 in this project, such as the lidar and navigation, builds on this class rather than changing it.

@@ -54,7 +54,7 @@ Before turning (2026-10-14), his body (0.7 x 0.5 m, the
 
 ```
 python3 -m robot.stack status | stand | sit | walk 0.5 | turn 90 | scan |
-                       nav-stop | cost | estop | action dance
+                       nav-stop | cost | estop | action moonwalk
 Nav2, on a floor map: floors, load <floor>, here <x> <y> <deg>, goto 1.5, places,
                 save <name> [x y deg], forget <name>, go <name>, go <x> <y> [deg]
 ```

@@ -81,7 +81,7 @@ directly to `192.168.1.120:43893`. Examples:
 | `0x21040001` | heartbeat. The controller keepalive, needed ≥ 2 Hz |
 | `0x21010D05` / `0D06` | enter / leave posture ("twist body") mode |
 | `0x21010130` | pitch stick (in posture mode: tilts the body) |
-| `0x21010506` etc. | built-in tricks (`hello`, `dance`, …) |
+| `0x21010506` etc. | built-in tricks (`hello`, `moonwalk`, …); `0x21010C0B` cancels one |
 
 Some codes come from DEEP Robotics' official source, some from a community
 SDK, and several were captured from the handheld and phone app by us.

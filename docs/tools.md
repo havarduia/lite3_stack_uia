@@ -20,7 +20,7 @@ after the last keypress, so a dropped SSH connection stops the robot.
 
 ## `robot/protocol.py` as a CLI
 
-`python3 -m robot.protocol stand_toggle`, `... dance`, `... 0x21010300`,
+`python3 -m robot.protocol stand_toggle`, `... moonwalk`, `... 0x21010300`,
 `... camera on`, `... voa off`. Sends a raw code with **no checks**; for
 debugging and capturing unknown codes only.
 

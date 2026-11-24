@@ -228,4 +228,4 @@ docs/                  the documentation; docs/history/ has lab notes
 - **Nav2 needs a floor map** (docs/navigation.md), and the Orin: without it he walks,
   turns and uses the depth camera, but does not navigate or speak (his voice is on the Orin too).
 - **`estop(disarm=True)`** while standing is untested.
-- Of the built-in tricks, only `dance` has been run on this robot.
+- Of the built-in tricks, `long_jump` and `turn_over` have never been run on this robot.

@@ -16,6 +16,7 @@ import math
 import time
 
 from lite3 import ACTIONS, Lite3
+from lite3.cli import trick
 from lite3.robot import RobotNode, ignoring_sigint
 from nav_msgs.msg import OccupancyGrid
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -146,7 +147,7 @@ def _cli():
             print('estop:', bot.estop(disarm='--disarm' in args))
             print(bot.status())
         elif cmd == 'action':
-            bot.action(args[1]); print(bot.status())
+            trick(bot, args[1]); print(bot.status())
         elif cmd == 'floors':
             print('\n'.join(bot.floors()) or 'no floors: fetch a map with env/get_map.sh')
         elif cmd == 'load':
