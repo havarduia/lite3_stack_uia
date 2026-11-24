@@ -6,6 +6,7 @@ A floor map under Nav2 (env/start_nav2_map.sh): the Orin's 3D localizer
 believe it. docs/navigation.md.
 """
 import math
+import os
 import subprocess
 import time
 
@@ -40,8 +41,10 @@ class Maps:
     _pose_pub = None
 
     def floors(self):
-        """The floors that have a map (~/lite3_maps/<floor>/, from env/get_map.sh)."""
-        return place_file.floors()
+        """The floors Nav2 can load: a map (~/lite3_maps/<floor>/, from env/get_map.sh) and a
+        3D map on the Orin (cloud.txt). Older floors without one stay on disk, unlisted."""
+        return [f for f in place_file.floors()
+                if os.path.isfile(os.path.join(place_file.floor_dir(f), 'cloud.txt'))]
 
     @property
     def floor(self):

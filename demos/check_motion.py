@@ -414,6 +414,12 @@ def main():
         assert 'no place' in refused(lambda b: b.go_to('canteen'), **on_floor())
         assert 'fit the map' in refused(lambda b: b.save_place('Nowhere'), **on_floor(locate.NO_FIT))
         assert 'wall' in refused(lambda b: b.save_place('In the wall', 8.05, 5.0, 0), **on_floor())
+        # Load lists only floors with a 3D map on the Orin (cloud.txt); 'lab' here has none
+        os.makedirs(os.path.join(places.ROOT, 'hall'))
+        for name in ('map.yaml', 'cloud.txt'):
+            open(os.path.join(places.ROOT, 'hall', name), 'w').close()
+        r, _, _ = run(lambda b: b.floors())
+        assert r == ['hall'] and places.floors() == ['hall', 'lab'], r
     places.ROOT = real_root
 
     # stopping a stack this process launched does not wait on its zombie (real time, real process)
