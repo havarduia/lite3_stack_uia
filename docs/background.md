@@ -36,9 +36,10 @@ unarmed robot, Nav2 outliving your process. `Lite3` encodes all of that once.
 
 **How does it avoid obstacles?**
 Three layers. (1) `walk()`/`turn()` check the depth camera at 4 Hz and stop.
-(2) Nav2 plans around obstacles in a costmap built from the depth camera
-(3D voxels that fade after 15 s), the two sonars and the lidar's flat scan
-([navigation.md](navigation.md#what-mapless-means)). (3) Optionally, the
+(2) Nav2 (on the Orin, on a floor map) plans around obstacles in costmaps
+built from the lidar, the depth camera (3D voxels that fade after 2.5 s) and
+the two sonars, with a collision monitor on every command
+([navigation.md](navigation.md#what-runs-where)). (3) Optionally, the
 vendor's `voa` node corrects velocities in real time (we fixed it so it
 actually can).
 

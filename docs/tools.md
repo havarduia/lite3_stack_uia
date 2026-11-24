@@ -1,25 +1,5 @@
 # Programs and tools
 
-## `bin/tour.py`: walk a route
-
-```
-python3 bin/tour.py "walk 1.5, turn 90, goto 2 -90"
-```
-
-Verbs: `walk <m>`, `turn <deg>`, `goto <m> [<deg>]` (Nav2), `approach <m>`.
-Flow: heartbeat →
-wait for the interlock → stand → (if needed) wait for the pose to settle and
-start Nav2 → each step → stop Nav2 → sit → drop heartbeat. A failed step is
-reported and skipped. At the end, still standing, he says `--finale "..."`
-(Piper, offline), tilting the body up (`--look-up 12`) to face whoever is there, or
-otherwise how far he walked. An `Odometer` thread sums the actual path length
-for that (summing start-to-end per step undercounts any step that is not straight).
-Until 2026-10-23 he also looked and commented after every step, through
-Gemini; that was removed (PRIVACY.md).
-
-`walk` steps add half a second of travel to `--stop`, because `walk()` samples
-the depth camera at 4 Hz and has no slow-down ramp.
-
 ## `bin/teleop.py`: keyboard driving over SSH
 
 `w/s/a/d`, space to stop, `+/-` speed. Keys are momentary: it stops 0.5 s
@@ -31,10 +11,8 @@ after the last keypress, so a dropped SSH connection stops the robot.
 - `demo.py`: ten lessons from "connect" to "run with no handheld". Lessons
   that move the robot need `--move`. Lesson 4 is worth showing: it tries unsafe
   things and prints the API's refusals.
-- `shake.py`: end-to-end regression: stand, walk, turn ±90, Nav2 goal, sit,
-  summary table.
 - `estop_nav.py`: sends a real SIGINT 6 s into a Nav2 goal and measures the
-  coast.
+  coast. Needs Nav2 up on a floor with him placed (panel: Load, I am here).
 - `check_motion.py`: what the motion code promises (a halt on every way out,
   clamping, the time ceiling, handheld takeover, the ways a Go ends, a quick
   `nav_stop()`) against a fake robot and a pretend Nav2. Sends nothing, so it
@@ -204,7 +182,7 @@ nothing running past the limit:
   on the motion computer and the Orin, which have no repo) writes CPU per
   core, load average, free memory and the top 15 processes every 2 s;
 - **perception computer**: `ros2 bag record` of the topics in
-  `env/runlog_topics.txt` (odometry from all three sources, AMCL,
+  `env/runlog_topics.txt` (odometry from all three sources, the 3D localizer,
   `/localized`, `/cmd_vel`, `/plan`, goal status, `/scan_walls`, state).
   Light topics only: no clouds, no images. A Python logger would cost about
   17% of a core per 50 Hz topic here; the recorder is C++.
@@ -228,7 +206,7 @@ each message arrived, not by its stamp (stamps use the legs' steady clock).
 - **odometry**: each source's track from its own first pose, the
   start-to-end gap (the loop closure error when the run ends where it
   began), and how far `/odom_fused` and `/lio_odom` drift from the legs;
-- **localization**: AMCL spread against `locate.SPREAD_XY_M`, scan fit,
+- **localization**: the spread against `locate.SPREAD_XY_M` (AMCL in runs before 2026-11-24), the fit,
   share of the time localized;
 - **relay**: falls back to leg odometry, FAST-LIO2's worst lag;
 - camera messages dropped, battery, and the **load** of all three computers

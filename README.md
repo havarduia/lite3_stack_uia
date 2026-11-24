@@ -17,9 +17,9 @@ with StackRobot() as bot:
 ```
 
 `StackRobot` is the SDK's `Lite3` plus what this project added: lidar
-odometry from the Orin, Nav2 navigation (mapless, or on a floor map), named
-places, and his voice. On top of it: a scripted tour, keyboard teleop and a
-web control panel.
+odometry from the Orin, Nav2 navigation on a floor map (the Orin plans and
+drives with MPPI), named places, and his voice. On top of it: keyboard teleop
+and a web control panel.
 
 ## The idea in one paragraph
 
@@ -39,7 +39,7 @@ stopped, even after a crash or Ctrl-C.
 - `bot.heartbeat_start()` makes your program the controller: the robot then
   obeys with **no handheld at all**, and your terminal (Ctrl-C) is the stop.
 - Ctrl-C in any `StackRobot` program runs `estop()`, which also kills Nav2.
-- `demos/shake.py`, `demos/estop_nav.py` and `demo.py ... --move` **move the robot**.
+- `demos/estop_nav.py` and `demo.py ... --move` **move the robot**.
 
 ## Getting started
 
@@ -75,8 +75,8 @@ stopped, even after a crash or Ctrl-C.
    ```
 
 6. Open the web panel at `http://lite3-perception:8080` (Tailscale) or
-   `http://192.168.2.1:8080` (the robot's wifi), and log in with the password
-   in `~/.lite3_panel_password` on the perception computer. The panel runs as
+   `http://192.168.2.1:8080` (the robot's wifi); it has no login, so only the
+   tailnet and his wifi keep it to operators (PRIVACY.md). The panel runs as
    `hmi.service`. Only one program may hold the robot: stop the panel
    (`sudo systemctl stop hmi`) before you run other scripts.
 
@@ -111,11 +111,11 @@ itself is the SDK's, with its own checks in `lite3_sdk_uia/tests/`.
 | understand the computers, the network ports and the arming interlock | [docs/hardware.md](docs/hardware.md) |
 | use the robot itself: state, posture, motion, e-stop, depth camera, speaker | the SDK's `docs/api.md` and `docs/robot.md` |
 | see what `StackRobot` adds, and the sonars for Nav2 | [docs/api.md](docs/api.md) |
-| navigate with Nav2, mapless or on a floor map, and save places | [docs/navigation.md](docs/navigation.md) |
+| navigate with Nav2 on a floor map, and save places | [docs/navigation.md](docs/navigation.md) |
 | make the robot talk | [docs/voice.md](docs/voice.md) |
 | run or change the web panel, cameras and wifi networking | [docs/panel.md](docs/panel.md) |
 | work with the lidar, the Orin and FAST-LIO2 odometry | [docs/lidar.md](docs/lidar.md) |
-| run the tour, teleop, demos, rviz, or measure a run | [docs/tools.md](docs/tools.md) |
+| run teleop, demos, rviz, or measure a run | [docs/tools.md](docs/tools.md) |
 | set up the environment, see our vendor patches and measured numbers | [docs/environment.md](docs/environment.md) |
 | know why it is built this way, FAQ, glossary | [docs/background.md](docs/background.md) |
 
@@ -148,7 +148,6 @@ robot/                 the library: `from robot.stack import StackRobot`
   loadwatch.py         CPU and memory log of one computer   (used by bin/run.py)
   frontcam.py          front camera frames during a run      (used by bin/run.py)
 bin/                   things you run
-  tour.py              walk or navigate a route, stop, look, talk
   teleop.py            drive from the keyboard over SSH
   run.py               record a test run on all three computers   (laptop)
   report.py            numbers and a plot from a recorded run      (laptop)
@@ -159,7 +158,6 @@ demos/                 teaching and regression scripts
   check_motion.py      StackRobot, Nav2 and maps against a fake robot (no robot needed)
   check_voice.py       the voice on the SDK's speaker              (no robot needed)
   check_map.py         one live lidar scan drawn on a floor map
-  shake.py             end-to-end regression test                  (MOVES THE ROBOT)
   estop_nav.py         proves e-stop works under Nav2              (MOVES THE ROBOT)
 env/                   environment, launchers, services, and patches to vendor code
   lite3_env.sh         source this first: ROS workspaces, CycloneDDS, PYTHONPATH
@@ -210,6 +208,6 @@ docs/                  the documentation; docs/history/ has lab notes
   with `walk()` and all of `teleop.py` have no obstacle guard. The lidar
   sees round him, but not low things right beside him.
 - **Map mode is young.** It works on the floors it was tested on
-  (docs/navigation.md); mapless goals are relative to odometry, which drifts.
+  (docs/navigation.md). Nav2 needs a floor map: there is no mapless mode.
 - **`estop(disarm=True)`** while standing is untested.
 - Of the built-in tricks, only `dance` has been run on this robot.

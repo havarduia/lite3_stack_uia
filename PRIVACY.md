@@ -24,7 +24,7 @@ fill in.
 
 | Data | Personal? | Where it goes | Kept |
 |---|---|---|---|
-| Live video, front camera and RealSense colour | Yes: faces of people in view | Only to logged-in panel pages, while a page shows that camera. Not stored by the panel. | Not kept |
+| Live video, front camera and RealSense colour | Yes: faces of people in view | Only to panel pages, while a page shows that camera. Not stored by the panel. | Not kept |
 | Front camera frames during a measured run (`bin/run.py --frames`) | Yes | Saved on the Orin during the run, then copied to the laptop's `logs/` | **1 hour** after the run stops, then deleted by `bin/run.py purge` (cron, every 5 minutes, on the laptop) |
 | Text an operator types for him to say | Only if someone types personal data | Spoken by Piper on the perception computer; shown in the panel's chat | Panel: the last 80 lines, in memory, gone when the panel restarts |
 | Depth cloud, lidar scans, floor maps | Low: shapes, no faces | Robot, Orin, laptop | Maps until deleted; run bags as long as the run folder |
@@ -37,11 +37,10 @@ nothing looks for people in the camera picture.
 
 ## How it is protected
 
-- **Panel login.** The panel asks for a password before it shows video or
-  takes a command. The password is in `~/.lite3_panel_password` on the
-  perception computer (made at the panel's first start, readable by its user
-  only). Give it only to operators. To change it, delete the file and restart
-  the panel (`sudo systemctl restart hmi`). That logs every browser out.
+- **No panel login** (removed 2026-11-24, the project's choice). Who can see
+  video or drive him is decided by the network alone: the tailnet and the
+  robot's own wifi (see Network). Anyone on either can, so keep both to
+  operators: no shared tailnet devices, and the wifi password only to them.
 - **Camera frames in runs** are off unless `bin/run.py start` gets `--frames`,
   and are deleted an hour after the run stops.
 - **Camera streams.** The motion computer's stream server (mediamtx) has no
@@ -50,7 +49,7 @@ nothing looks for people in the camera picture.
   the tailnet (`tailscale set --shields-up=true`: its Tailscale runs in
   userspace mode, which reaches local ports over loopback, where a firewall
   cannot tell it from the camera's own push). Everyone else sees the cameras
-  through the panel's login or not at all. Tested 2026-10-23 from the robot's
+  through the panel or not at all. Tested 2026-10-23 from the robot's
   wifi and the tailnet: closed.
 - **Network.** The panel is reachable only on the tailnet and on the robot's
   own wifi (password-protected). Traffic over Tailscale is end-to-end encrypted;

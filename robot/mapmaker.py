@@ -172,7 +172,7 @@ def install(name, pgm, yaml_path, root=None, run=None):
     if any(places._key(q['name']) == START for q in places.load(name, root)):
         places.delete(name, START, root)
     places.save(name, START, -MOUNT_XYZ[0], 0.0, 0.0, root=root)
-    if run:     # the walk this floor came from, for the Orin's 3D localizer (LOCALIZER=cloud)
+    if run:     # the walk this floor came from, for the Orin's 3D localizer
         with open(os.path.join(d, 'cloud.txt'), 'w') as f:
             f.write('%s/%s/slam_output/latest\n' % (ORIN_MAPS, run))
 
@@ -274,7 +274,7 @@ def check():
             assert 'image: map.pgm' in open(os.path.join(d, 'map.yaml')).read()
             s = places.load('hall', root)
             assert [(q['name'], q['x'], q['y']) for q in s] == [('start', -MOUNT_XYZ[0], 0.0)], s
-            assert open(os.path.join(d, 'cloud.txt')).read().strip() == ORIN_MAPS + '/' + run + '/slam_output/latest'  # for LOCALIZER=cloud
+            assert open(os.path.join(d, 'cloud.txt')).read().strip() == ORIN_MAPS + '/' + run + '/slam_output/latest'  # for the 3D localizer
             # again under the same name: replaced, the old one kept, still one start
             orin.update(running=True, result=None)
             save('hall', root=root)

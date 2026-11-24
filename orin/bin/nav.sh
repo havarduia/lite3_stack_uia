@@ -1,6 +1,6 @@
 #!/bin/bash
-# nav.sh run FLOOR | stop | state - Nav2 on the Orin, driving (nav_stack_migration.md, step 5b).
-# Started over ssh by perception's env/start_nav2_map.sh (NAV_STACK=orin), which first copies the
+# nav.sh run FLOOR | stop | state - Nav2 on the Orin: it plans (Smac) and drives (MPPI).
+# Started over ssh by perception's env/start_nav2_map.sh, which first copies the
 # floor's map to ~/lite3_maps/FLOOR/. `run` lives as long as that ssh: when perception's Nav2 stops,
 # ssh ends, stdin closes and everything here stops with it. Needs FAST-LIO2 (lio_live) and
 # cloud_locate with the floor's cloud (perception's lio_relay map). Output: ~/nav/FLOOR_<time>.log.
@@ -18,7 +18,6 @@ run)
     map=~/lite3_maps/$floor/map.yaml
     [ -f "$map" ] || { echo "no map $map"; exit 1; }
     stop
-    ~/bin/shadow.sh stop > /dev/null       # one of them on the ports
     source /opt/ros/humble/setup.bash
     source ~/cmu_ws/install/setup.bash
     export ROS_DOMAIN_ID=42
@@ -26,7 +25,11 @@ run)
     log=~/nav/${floor}_$(date +%Y%m%d_%H%M%S).log
     cd ~/bin
     P="--ros-args --params-file orin_nav2.yaml"
-    # terrainAnalysis as shadow.sh has it (the reasons are there)
+    # CMU's terrainAnalysis parameters, with the two the bridge showed wrong for our lidar height,
+    # and his height: above 0.7 m he walks under it (CMU's 1.5 m made overhangs in doors obstacles).
+    # clearDyObs: points within noDecayDis never fade, so standing beside a chair grew a 1.4 m patch
+    # he could walk through (strip_frames, 2026-11-02); this clears what later scans see through.
+    # noDecayDis stays 1.5: 0.6 was tried 2026-11-16 and he walked into things (docs/navigation.md)
     ta=$(sed -n 's/.*name="\([^"]*\)" value="\([^"]*\)".*/-p \1:=\2/p' \
          ~/cmu_ws/src/terrain_analysis/launch/terrain_analysis.launch)
     {

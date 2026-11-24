@@ -4,14 +4,9 @@
 python3 -m robot.hmi     # then open http://lite3-perception:8080
 ```
 
-**Login** (2026-10-23, [PRIVACY.md](../PRIVACY.md)). Every
-page and request needs a login first: one password, in
-`~/.lite3_panel_password` on the perception computer, made at the panel's
-first start. A login lasts 30 days on that browser, in an HttpOnly,
-SameSite=Strict cookie derived from the password, so changing the password
-(delete the file, restart the panel) logs everyone out. A wrong password
-costs a second. `robot/rviz.py` sends the same key in an `X-Panel-Key`
-header.
+**No login** since 2026-11-24 (it had one from 2026-10-23): anyone who
+reaches the port can watch and drive, so the networks it listens on are the
+only gate ([PRIVACY.md](../PRIVACY.md)).
 
 An `aiohttp` server on the **Tailscale VPN address**, so nothing on the
 public Wi-Fi can reach it, and on the robot's own network (`eth0`,

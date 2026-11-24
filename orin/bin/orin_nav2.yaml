@@ -1,6 +1,6 @@
-# Nav2 Humble on the Orin, driving (nav_stack_migration.md, step 5b), started by nav.sh.
+# Nav2 Humble on the Orin, the robot's only Nav2 that drives; started by nav.sh.
 # bt_navigator (Humble's default tree: replan once a second, recoveries) -> planner_server
-# (Smac 2D on the floor map) -> controller_server (MPPI, as shadow_nav2.yaml tuned it on the walks)
+# (Smac 2D on the floor map) -> controller_server (MPPI, tuned on the shadow walks of October)
 # -> collision_monitor -> /cmd_vel, which orin_nav.py sends to perception.
 # The map comes from perception (env/start_nav2_map.sh copies it); map -> odom from orin_nav.py.
 bt_navigator:
@@ -51,7 +51,7 @@ controller_server:
       xy_goal_tolerance: 0.25
       yaw_goal_tolerance: 0.25
       stateful: true
-    # shadow_nav2.yaml's, but wz_std 0.4 -> 0.8 and batch 1000 -> 2000: at the stalls on the bridge walk
+    # the shadow walks' tuning, but wz_std 0.4 -> 0.8 and batch 1000 -> 2000: at the stalls on the bridge walk
     # no sample turned enough to get round a door frame (56 optimizer fails); the Orin kept its 10 Hz at 1000
     FollowPath:
       plugin: nav2_mppi_controller::MPPIController
@@ -137,7 +137,7 @@ collision_monitor:
       max_points: 2
       visualize: false
     observation_sources: [terrain, depth, sonar_front]
-    # /terrain_h: z is the height over the local ground (shadow_nav2.yaml's terrain_layer)
+    # /terrain_h: z is the height over the local ground
     terrain: {type: pointcloud, topic: /terrain_h, min_height: 0.15, max_height: 0.7}
     depth: {type: pointcloud, topic: /depth_points, min_height: 0.1, max_height: 0.7}
     sonar_front: {type: range, topic: /sonar/front, obstacles_angle: 0.05}

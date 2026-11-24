@@ -28,7 +28,7 @@ from robot.stack import ODOM_TOPIC, StackNode, StackRobot  # noqa: E402
 class World(T.World):
     """The SDK's fake robot, plus what the stack listens to: Nav2's costmaps and
     what robot/locate.py last said (with the odometry of that moment). None of
-    it in mapless mode."""
+    it until a floor is loaded and he is placed (on_floor())."""
     grid = loc = loc_stopped = None
     local_grid = None           # Nav2's local costmap, in odom: what a turn on the spot checks first
     loc_odom = (0.0, 0.0, 0.0)
@@ -270,11 +270,15 @@ def main():
     r, _, _ = run(crash)
     assert isinstance(r, ZeroDivisionError) and calls == ['heartbeat_start', 'wait_ready', 'stand', 'sit'], calls
 
+    # Nav2 runs on a floor map only
+    r, _, _ = run(lambda b: b.nav_start())
+    assert isinstance(r, Lite3Error) and 'floor' in str(r), r
+
     # a Go: one action client however many goals, and three ways it ends
     made = pretend_nav2(arrives=2.0)
     r, _, _ = run(lambda b: [b.goto(1.0, check=False) for _ in range(3)])
     assert r == [nav.SUCCEEDED] * 3 and len(made) == 1, (r, made)
-    assert sent_goal() == ('odom', 1.0, 0.0, 0), sent_goal()     # mapless: goals are in odom, as ever
+    assert sent_goal() == ('odom', 1.0, 0.0, 0), sent_goal()     # no costmap yet: nothing to move it onto
     pretend_nav2(arrives=None)                                   # a Nav2 that never gets there
     r, halted, _ = run(lambda b: b.goto(1.0, check=False), at=(1.0, lambda w: w.bot.goto_cancel()))
     assert r == nav.CANCELED and halted, r                       # cancelled from another thread
@@ -297,7 +301,7 @@ def main():
     r, _, _ = run(lambda b: b.map_pose, odom=(1.0, 0.0, 0.0), **on_floor())
     assert all(abs(a - b) < 1e-9 for a, b in zip(r, (5.0, 6.0, math.pi / 2))), r
     r, _, _ = run(lambda b: (b.localized, b.map_pose))
-    assert r == (False, None), r            # mapless: neither
+    assert r == (False, None), r            # not placed: neither
 
     # go to a point on the map
     r, _, _ = run(lambda b: (b.go_to_point(2.0, 5.0), b._node.odom[2]), **on_floor())
@@ -360,15 +364,9 @@ def main():
     assert isinstance(r, Lite3Error) and 'arrived twice' in str(r), r
     pretend_nav2(arrives=None)
 
-    # told where he is while a wide estimate happens to sit nearby (set down after a carry): AMCL must still hear it
+    # told where he is while a wide estimate happens to sit nearby (set down after a carry): the Orin must still hear it
     r, _, _ = run(lambda b: b.set_pose(5.0, 5.2, 90, timeout=2.0), **on_floor(locate.SPREAD))
     assert isinstance(r, Lite3Error) and 'too wide' in str(r) and len(POSES) == 1, (r, POSES)
-    assert abs(POSES[0].pose.covariance[0] - maps.POSE_STD[0] ** 2) < 1e-9, POSES[0].pose.covariance[0]   # a tap: wide
-    del POSES[:]
-    # a pose checked against the walls (demos/check_map.py's best fit) is told to AMCL as narrow
-    run(lambda b: b.set_pose(5.0, 5.2, 90, timeout=2.0, std=maps.FIT_POSE_STD), **on_floor(locate.SPREAD))
-    c = POSES[0].pose.covariance
-    assert abs(c[0] - maps.FIT_POSE_STD[0] ** 2) < 1e-9 and abs(c[35] - maps.FIT_POSE_STD[1] ** 2) < 1e-9, (c[0], c[35])
     del POSES[:]
 
     # not placed yet: the pose is not said again while the Orin's search (a few seconds) may still be running

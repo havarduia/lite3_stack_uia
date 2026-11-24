@@ -163,7 +163,7 @@ class Fuse:
 class CloudFix:
     """The Orin's 3D fixes (robot/cloud_locate.py) as map -> odom. take() each one with
     /odom_fused's pose at its moment; map_odom is the newest accepted, None while
-    the Orin has no map (Nav2 on AMCL, which owns map -> odom then)."""
+    the Orin has no map (Nav2 down: nothing needs map -> odom then)."""
 
     def __init__(self):
         self.map_odom = None
@@ -305,7 +305,7 @@ def main():
     tf_pub = TransformBroadcaster(node)
     tf = TransformStamped()
     tf.header.frame_id, tf.child_frame_id = 'odom', 'base_link'
-    # map -> odom from the Orin's 3D fixes, while it has a map (Nav2 with LOCALIZER=cloud)
+    # map -> odom from the Orin's 3D fixes, while it has a map (Nav2 on a floor)
     fix_pub = node.create_publisher(Float64MultiArray, CLOUD_FIX_TOPIC, 5)
     map_tf = TransformStamped()
     map_tf.header.frame_id, map_tf.child_frame_id = 'map', 'odom'
@@ -435,7 +435,7 @@ def main():
             threading.Thread(target=start, daemon=True).start()     # not in the 50 Hz path
 
     node.create_subscription(Odometry, LEG_TOPIC, leg, 1)
-    # "I am here" goes to AMCL as ever, and to the Orin's localizer (ignored there without a map)
+    # "I am here" (maps.set_pose) goes to the Orin's localizer (ignored there without a map)
     node.create_subscription(PoseWithCovarianceStamped, '/initialpose', lambda m: place(
         m.pose.pose.position.x, m.pose.pose.position.y, yaw_of((m.pose.pose.orientation.x, m.pose.pose.orientation.y,
                                                                  m.pose.pose.orientation.z, m.pose.pose.orientation.w))), 5)
@@ -530,7 +530,7 @@ def demo():
     row = c.take(unpack_fix(pack_fix(7, 7, (9, 9, 0, 0), 0.9, 0.9, 0.05, [], (0, 0, 0), FIX_OK)), None)
     assert c.map_odom == held and row[0] == FIX_REFUSED    # its moment not in the odometry kept: not used, and says so
     row = c.take(unpack_fix(pack_fix(8, 8, (0, 0, 0, 0), 0, 0, 0, FIX_AXES, (0, 0, 0), FIX_NO_MAP)), (1.0, 0.0, 0.0))
-    assert c.map_odom is None and math.isnan(row[1])      # unloaded: no map -> odom from here (AMCL's job)
+    assert c.map_odom is None and math.isnan(row[1])      # unloaded: no map -> odom from here (no floor loaded)
     print('lio_relay ok')
 
 

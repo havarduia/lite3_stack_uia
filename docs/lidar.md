@@ -25,7 +25,7 @@ It publishes two topics on the robot's graph:
   it (`lidar-scan.service` there runs its `~/bin/lidar_nav.launch.py`;
   our copy of the unit is `env/lidar-scan.service`): everything between
   0.15 m below and 1.0 m above `base_link`, nearer than 0.4 m dropped as
-  the robot itself. It feeds the scan layer of Nav2's costmaps ([What "mapless" means](navigation.md#what-mapless-means)).
+  the robot itself. It feeds the scan layer of perception's Nav2 costmaps ([What runs where](navigation.md#what-runs-where)).
   Lying down, the floor is inside that height band and shows as a ring
   of returns from 0.6 m out, so the relay only passes scans on while the
   robot is standing (basic state 6). Measured lying down, 2026-10-08:
@@ -33,7 +33,7 @@ It publishes two topics on the robot's graph:
   ways, so the 20.4° pitch holds; it lay 0.10 m below `base_link`.
 - `/scan_walls` (2026-10-09): the same, cut 0.9 to 1.7 m above `base_link`,
   which is above tables and chairs. It is for finding the robot on a floor
-  map (AMCL and `robot/locate.py`), because the floor maps show only what
+  map (`demos/check_map.py`; AMCL used it until 2026-11-24), because the floor maps show only what
   runs from floor to ceiling and the low scan is mostly furniture. In the
   lab, standing on the map's start mark: all of the high scan's returns
   land on mapped walls, 37% of the low scan's (`demos/check_map.py`).

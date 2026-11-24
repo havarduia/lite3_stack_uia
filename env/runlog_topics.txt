@@ -7,24 +7,19 @@
 /odom_fused
 /leg_odom2
 /lio_odom
-/amcl_pose
 /localized
 /tf_static
 # not /tf: 50 Hz of mostly odom -> base_link, which /odom_fused already is; it
 # took the recorder (the `ros2` process) from 13% to 11% of a core (2026-10-14)
 
 # what Nav2 wanted and did
+# (the Orin's command and route, as robot/orin_nav.py passes them on; the Orin's own bag has more)
 /cmd_vel
 /plan
-/local_plan
-# RPP's aim point on the route (plan rpp-controller); nothing while DWB drives
-/lookahead_point
-# what stopped him: RPP's collision check path, and the costmap and sonar it checks against
-# (W1 2026-10-15: a 3 s "collision ahead" stop at the lab door, cause not recorded)
-/lookahead_collision_arc
+# the costmap and sonar here, which the panel's checks read and the Orin gets the camera from
 /local_costmap/costmap
 /sonar/front
-# the 3D localizer's fixes as map -> odom, with their fit (LOCALIZER=cloud; lio_relay.CloudFix)
+# the 3D localizer's fixes as map -> odom, with their fit (lio_relay.CloudFix)
 /cloud_fix
 /navigate_to_pose/_action/status
 /global_costmap/costmap

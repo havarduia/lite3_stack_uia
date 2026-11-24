@@ -31,7 +31,7 @@ for SLAM, navigation and vision
    pitched 20° down)    │         (Jetson2Motion, patched by us)    │
                         │  voa_ros2.service  vendor obstacle        │
                         │                    avoidance (optional)   │
-                        │  Nav2 (mapless)    started by our code    │
+                        │  Nav2 costmaps     started by our code    │
                         │  ► THIS REPOSITORY ◄                      │
                         └───────────────────────────────────────────┘
                                         │ Tailscale (VPN)

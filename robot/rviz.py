@@ -148,7 +148,6 @@ def to_panel():
     rviz as a page, so closing rviz stops a goal it sent as closing the page would."""
     import asyncio
     import aiohttp
-    from .protocol import panel_key       # the panel wants a login (robot/hmi.py)
 
     async def run():
         loop, lines, ws = asyncio.get_event_loop(), asyncio.Queue(), None
@@ -170,7 +169,7 @@ def to_panel():
                 line = (await lines.get()).strip()
                 try:
                     if ws is None or ws.closed:
-                        ws = await http.ws_connect(PANEL, headers={'X-Panel-Key': panel_key()})
+                        ws = await http.ws_connect(PANEL)
                         loop.create_task(drain(ws))
                     await ws.send_str(line)
                     print('to the panel: %s' % line, file=sys.stderr, flush=True)

@@ -1,54 +1,19 @@
 #!/usr/bin/env python3
-"""nav2_map_params - Nav2's parameters for map mode, made from the mapless ones.
+"""nav2_map_params - the parameters for perception's half of Nav2 on a floor map.
 
     python3 env/nav2_map_params.py <mapless.yaml> <map.yaml> <out.yaml>
     python3 env/nav2_map_params.py check
 
-Map mode is the mapless stack with a floor map under it: the global costmap
-moves to the `map` frame, gets the map as its first layer and loses the
-depth camera and the sonars, and a map server and AMCL are added. Everything else is the mapless file as it stands
-on the robot, so its tuning (env/nav2-mapless-lite3.patch) is done once.
+Made from the vendor's mapless file as it stands on the robot, so its tuning
+(env/nav2-mapless-lite3.patch) is done once: the global costmap moves to the
+`map` frame, gets the map as its first layer and loses the depth camera and the
+sonars, and a map server is added. The Orin's Nav2, which drives, has its own
+file (orin/bin/orin_nav2.yaml).
 """
 import copy
 import sys
 
 import yaml
-
-# AMCL, from the block the Orin's ~/robot_pc/nav2_params.yaml had for this robot.
-AMCL = {
-    'use_sim_time': False,
-    'base_frame_id': 'base_link',
-    'odom_frame_id': 'odom',
-    'global_frame_id': 'map',
-    'scan_topic': 'scan_walls',                 # the lidar cut above the furniture (robot/lio_relay.py)
-    'robot_model_type': 'omnidirectional',      # a legged robot can step sideways
-    'laser_model_type': 'likelihood_field',
-    'laser_min_range': 0.4,                     # nearer is the robot itself (the Orin's scan drops it)
-    'laser_max_range': 30.0,
-    'max_beams': 120,
-    'min_particles': 500,
-    'max_particles': 3000,
-    # Motion noise. 0.3 was for slipping leg odometry; /odom_fused is FAST-LIO2-corrected
-    # since 2026-10-08. At 0.3 the estimate never narrowed (0.30 m from a hand-set pose,
-    # 0.43 m after a walk, fit 0.9-1.0 all along) and any turn took it past locate.py's
-    # 0.5 m: "lost" at every corridor turn (docs/history/LIDAR_ORIN_LOG.md section 28).
-    'alpha1': 0.1, 'alpha2': 0.1, 'alpha3': 0.1, 'alpha4': 0.1, 'alpha5': 0.1,
-    'update_min_d': 0.15,
-    'update_min_a': 0.15,
-    'resample_interval': 1,
-    'transform_tolerance': 0.5,
-    'recovery_alpha_fast': 0.0,
-    'recovery_alpha_slow': 0.0,
-    'z_hit': 0.5, 'z_rand': 0.5, 'z_max': 0.05, 'z_short': 0.05,
-    'sigma_hit': 0.2,
-    'lambda_short': 0.1,
-    'laser_likelihood_max_dist': 2.0,
-    'pf_err': 0.05, 'pf_z': 0.99,
-    'do_beamskip': False,
-    'save_pose_rate': 0.5,
-    'tf_broadcast': True,
-    'set_initial_pose': False,                  # it waits to be told where it is
-}
 
 # nav2_bringup's navigation launch rewrites map_subscribe_transient_local in
 # whatever file it is given, to false unless told otherwise: it is set where
@@ -61,7 +26,7 @@ STATIC_LAYER = {
 # was mapped as free. The static layer takes cells of this value as unknown
 # and (not tracking unknown) as free; -1, the map's real unknown, is then no
 # longer that value and falls through to "at least lethal_cost_threshold":
-# a wall. AMCL reads the map itself and still sees grey as unknown. Tracking
+# a wall. Tracking
 # unknown instead does not hold: the other layers write free over it. In
 # this Nav2 the static layer reads the value from the costmap, not from itself.
 UNKNOWN_COST_VALUE = 50
@@ -75,31 +40,17 @@ UNKNOWN_COST_VALUE = 50
 GLOBAL_DROPPED = ('stvl_obstacle_layer', 'range_layer')
 GLOBAL_UPDATE_HZ = 1.0
 GLOBAL_PUBLISH_HZ = 0.5
-# The local costmap is sent as often as RPP steers on it, so a bag holds what
-# RPP saw at a "collision ahead" stop; at the mapless 1 Hz it missed brief marks.
+# The local costmap is sent 5 times a second, so a bag holds brief marks; at the
+# vendor's 1 Hz it missed them.
 LOCAL_PUBLISH_HZ = 5.0
 # Nearer than this the D435 cannot measure: a false stereo match on the bridge railing put a voxel
 # 12 cm from the lens and stopped him (docs/navigation.md, 2026-11-13). The floor enters the view at 0.5 m.
 CAMERA_NEAR_M = 0.25
 
 
-def check_rpp(p):
-    """Regulated Pure Pursuit slows near walls by reading distance back out of the local
-    costmap's inflation cost, so its factor must be the costmap's (plan rpp-controller)."""
-    f = p.get('controller_server', {}).get('ros__parameters', {}).get('FollowPath', {})
-    if 'RegulatedPurePursuit' not in str(f.get('plugin')):
-        return
-    want = p['local_costmap']['local_costmap']['ros__parameters']['inflation_layer']['cost_scaling_factor']
-    if f.get('inflation_cost_scaling_factor') != want:
-        raise ValueError('FollowPath.inflation_cost_scaling_factor is %s but the local inflation '
-                         'cost_scaling_factor is %s: make them equal' % (f.get('inflation_cost_scaling_factor'), want))
-
-
 def map_params(mapless, map_yaml):
     """The mapless parameters (as a dict) -> map mode's."""
-    check_rpp(mapless)
     p = copy.deepcopy(mapless)
-    p['bt_navigator']['ros__parameters']['global_frame'] = 'map'
     g = p['global_costmap']['global_costmap']['ros__parameters']
     g['global_frame'] = 'map'
     g['rolling_window'] = False             # the whole floor, not a window round the robot
@@ -114,7 +65,6 @@ def map_params(mapless, map_yaml):
     g['static_layer'] = dict(STATIC_LAYER)
     g['unknown_cost_value'] = UNKNOWN_COST_VALUE
     p['map_server'] = {'ros__parameters': {'use_sim_time': False, 'yaml_filename': map_yaml}}
-    p['amcl'] = {'ros__parameters': dict(AMCL)}
     return p
 
 
@@ -159,7 +109,7 @@ recoveries_server:
     assert mapless == before                                    # the input is not touched
     g = '/global_costmap/global_costmap/ros__parameters/'
     assert changed(mapless, out) == sorted([
-        '/amcl', '/map_server', '/bt_navigator/ros__parameters/global_frame',
+        '/map_server',
         g + 'global_frame', g + 'rolling_window', g + 'plugins', g + 'static_layer',
         g + 'update_frequency', g + 'publish_frequency', g + 'unknown_cost_value',
         g + 'stvl_obstacle_layer', g + 'range_layer',
@@ -174,23 +124,8 @@ recoveries_server:
     assert lp['global_frame'] == 'odom' and lp['publish_frequency'] == LOCAL_PUBLISH_HZ   # steering stays in odom
     assert out['recoveries_server']['ros__parameters']['global_frame'] == 'odom'
     assert out['map_server']['ros__parameters']['yaml_filename'] == '/maps/f/map.yaml'
-    assert out['amcl']['ros__parameters']['base_frame_id'] == 'base_link'
-    assert all(out['amcl']['ros__parameters']['alpha%d' % i] == 0.1 for i in range(1, 6))
     # written and read back it is the same, types included (a float must not come back a string)
     assert changed(out, yaml.safe_load(yaml.safe_dump(out))) == []
-    # RPP reads distance to walls back out of the local costmap's inflation: same factor, or refused
-    rpp = copy.deepcopy(mapless)
-    rpp['local_costmap']['local_costmap']['ros__parameters']['inflation_layer'] = {'cost_scaling_factor': 8.0}
-    rpp['controller_server'] = {'ros__parameters': {'FollowPath': {
-        'plugin': 'nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController',
-        'inflation_cost_scaling_factor': 8.0}}}
-    map_params(rpp, '/maps/f/map.yaml')
-    rpp['controller_server']['ros__parameters']['FollowPath']['inflation_cost_scaling_factor'] = 3.0
-    try:
-        map_params(rpp, '/maps/f/map.yaml')
-        raise AssertionError('a mismatched inflation_cost_scaling_factor was taken')
-    except ValueError as e:
-        assert '3.0' in str(e) and '8.0' in str(e), e
     print('nav2_map_params ok')
 
 

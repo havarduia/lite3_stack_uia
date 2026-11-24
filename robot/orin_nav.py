@@ -1,16 +1,20 @@
-"""orin_nav - perception's end of the Orin's Nav2 (nav_stack_migration.md, step 5b; NAV_STACK=orin).
+"""orin_nav - perception's end of the Orin's Nav2, which plans and drives.
 
 Serves navigate_to_pose here, so robot/nav.py works as before, and passes each goal to the Orin
 (orin/bin/orin_nav.py), where Nav2 Humble plans (Smac) and drives (MPPI, collision monitor). Back
 come how the goal stands, the route (published here as /plan, for the panel) and the command, which
-goes on /cmd_vel while the goal runs and is fresh (shadow_link's drive_cmd), then zeros, then quiet:
+goes on /cmd_vel while the goal runs and is fresh (drive_cmd), then zeros, then quiet:
 the panel's own turns and walks get through. The Orin cancels a goal when this goes quiet; this
 ends one when the Orin does (ORIN_STALE_S).
 
-The depth camera (the voxels perception's local costmap keeps) and the sonars go to the Orin as in
-robot/shadow_link.py; the Orin sends no command while they are stale. Everything else of Nav2
-stays here as it was, without bt_navigator: the map, the costmaps (the panel, cost_at, turn_blocked)
-and the planner for route_to (env/nav2_map.launch.py).
+The depth camera goes to the Orin as the obstacle voxels perception's local costmap keeps (STVL's
+/local_costmap/voxel_grid, with its memory and frustum clearing), placed around base_link by the
+odometry of that moment; the sonars as their ranges. The Orin sends no command while they are stale.
+Perception keeps the map, the costmaps (the panel, cost_at, turn_blocked) and the planner for
+route_to (env/nav2_map.launch.py), without bt_navigator.
+
+Kept cheap: perception is ~75% busy without it. A tf listener (every /tf, 50+ a second, in Python)
+cost ~0.4 core and starved the panel into "lost on the way" stops (big_walk, 2026-10-28).
 
     python3 -m robot.orin_nav [dry]     started by env/start_nav2_map.sh; dry: no /cmd_vel
     python3 -m robot.orin_nav check     self-check, no ROS
@@ -24,8 +28,21 @@ import threading
 import time
 
 from .lio_relay import ORIN, yaw_of
-from .shadow_link import (CMD, DRIVE_HZ, DRIVE_PORT, ORIN_PORT, SONAR, SONARS, STOP_TICKS, _interrupt,
-                          depth_packet, drive_cmd)
+
+# The layouts and ports orin/bin/orin_nav.py reads (check() compares them)
+ORIN_PORT = 8044
+DRIVE_PORT = 8045       # MPPI's commands from the Orin
+CMD = struct.Struct('<c3d')         # V, vx, vy, wz
+DEPTH = struct.Struct('<cd3d')      # D, when, base_link x y yaw in odom; float32 (x, y) around base_link follow
+SONAR = struct.Struct('<cB4f')      # S, 0 front 1 rear, range, min, max, field of view
+SONARS = ('/sonar/front', '/sonar/rear')    # robot/sonar_range.py, 20 Hz
+DEPTH_Z = (0.05, 0.7)   # m above the floor: STVL's lowest, and his height (nav.sh vehicleHeight)
+MAX_VOXELS = 5000       # 40 kB: one datagram
+DRIVE_VX = (-0.2, 0.5)  # m/s
+DRIVE_WZ = 0.8          # rad/s, MPPI's own wz_max
+MPPI_STALE_S = 0.3      # MPPI speaks at 10 Hz
+DRIVE_HZ = 20
+STOP_TICKS = 10         # zeros sent after driving ends (best effort drops some), then quiet
 
 GOAL = struct.Struct('<cI3d')       # G, goal number, x y yaw on the map
 CANCEL = struct.Struct('<cI')       # C, goal number
@@ -38,6 +55,28 @@ TAKE_S = 20.0           # the Orin takes a goal within this, or it is aborted he
 ORIN_STALE_S = 2.0      # it tells the goal's status twice a second
 CANCEL_WAIT_S = 3.0
 CAMERA_STALE_S = 1.0    # no depth frame for this long: the camera has stopped, no voxels go to the Orin
+
+
+def _interrupt(*_):
+    raise KeyboardInterrupt
+
+
+def drive_cmd(mppi, mppi_age):
+    """What to publish: MPPI's (vx, vy, wz) clamped, or zeros when MPPI has gone quiet."""
+    if mppi is None or mppi_age > MPPI_STALE_S:
+        return 0.0, 0.0, 0.0
+    vx, _, wz = mppi
+    return min(max(vx, DRIVE_VX[0]), DRIVE_VX[1]), 0.0, min(max(wz, -DRIVE_WZ), DRIVE_WZ)
+
+
+def depth_packet(when, base, xyz):
+    """Voxels in odom (n x 3) -> a datagram of those in DEPTH_Z, as (x, y) around base_link."""
+    import numpy as np
+    p = xyz[(xyz[:, 2] >= DEPTH_Z[0]) & (xyz[:, 2] <= DEPTH_Z[1])][:MAX_VOXELS]
+    c, s = math.cos(base[2]), math.sin(base[2])
+    dx, dy = p[:, 0] - base[0], p[:, 1] - base[1]
+    rel = np.stack([c * dx + s * dy, -s * dx + c * dy], 1).astype(np.float32)
+    return DEPTH.pack(b'D', when, *base) + rel.tobytes()
 
 
 def goal_end(status, cancelling):
@@ -75,7 +114,7 @@ def main(dry=False):
     d = {'seq': int(time.time() * 10) & 0x7fffffff, 'active': None, 'cancelling': False, 'driving': False,
          'status': {}, 'mppi': None, 'at': 0.0, 'zeros': 0}
 
-    # --- the camera and the sonars, as shadow_link.py sends them -------------------------
+    # --- the camera and the sonars ---------------------------------------------------------
     odom_node = rclpy.create_node('orin_nav_odom')
     odom_ex = SingleThreadedExecutor()
     odom_ex.add_node(odom_node)
@@ -164,7 +203,9 @@ def main(dry=False):
 
     # --- what comes back -----------------------------------------------------------------------
     plan_pub = node.create_publisher(Path, '/plan', 1)
-    cmd_pub = None if dry else node.create_publisher(Twist, '/cmd_vel', 10)     # reliable: see shadow_link.py
+    # reliable, as Nav2 publishes it: a best-effort publisher never reaches a reliable subscriber, so
+    # bags (bin/run.py) recorded no /cmd_vel at all on mppi_drive2
+    cmd_pub = None if dry else node.create_publisher(Twist, '/cmd_vel', 10)
     back = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     back.bind(('', DRIVE_PORT))
     back.setblocking(False)
@@ -209,7 +250,7 @@ def main(dry=False):
                 path(data)
         now = time.monotonic()
         if d['driving']:
-            send(*drive_cmd(d['mppi'], now - d['at'], 0.0))
+            send(*drive_cmd(d['mppi'], now - d['at']))
             d['zeros'] = STOP_TICKS
         elif d['zeros'] > 0:
             send(0.0, 0.0, 0.0)
@@ -241,11 +282,25 @@ def check():
     assert goal_end(CANCELED, True) == 'canceled'
     assert goal_end(SUCCEEDED, True) == 'canceled'      # arrived as the cancel went: he stopped either way
     assert goal_end(EXECUTING, False) is None and goal_end(0, True) is None
-    # the Orin's end reads the same layouts
+    assert drive_cmd((0.7, 0.1, -2.0), 0.1) == (0.5, 0.0, -0.8)         # clamped, no strafe
+    assert drive_cmd((-0.5, 0.0, 0.2), 0.1) == (-0.2, 0.0, 0.2)
+    assert drive_cmd((0.2, 0.0, 0.1), 0.1) == (0.2, 0.0, 0.1)
+    assert drive_cmd((0.2, 0.0, 0.1), 0.5) == (0.0, 0.0, 0.0)          # MPPI quiet
+    assert drive_cmd(None, 0.0) == (0.0, 0.0, 0.0)
+    import numpy as np
+    # he is at (1, 2) facing +y: a voxel 1 m ahead, (1, 3), is (1, 0) around him; the floor and
+    # anything over his head are dropped
+    pk = depth_packet(5.0, (1.0, 2.0, math.pi / 2), np.array([[1.0, 3.0, 0.3], [1.0, 3.0, 0.0], [1.0, 3.0, 1.0]]))
+    assert DEPTH.unpack(pk[:DEPTH.size])[:2] == (b'D', 5.0)
+    xy = np.frombuffer(pk, np.float32, offset=DEPTH.size)
+    assert xy.shape == (2,) and abs(xy[0] - 1.0) < 1e-6 and abs(xy[1]) < 1e-6, xy
+    # the Orin's end reads the same layouts on the same ports
     sys.path.insert(0, __file__.rsplit('/robot/', 1)[0] + '/orin/bin')
     import importlib
     o = importlib.import_module('orin_nav')
-    assert [a.format for a in (o.GOAL, o.CANCEL, o.STATUS, o.PATH)] == [a.format for a in (GOAL, CANCEL, STATUS, PATH)]
+    mine = (GOAL, CANCEL, STATUS, PATH, CMD, DEPTH, SONAR)
+    assert [a.format for a in (o.GOAL, o.CANCEL, o.STATUS, o.PATH, o.CMD, o.DEPTH, o.SONAR)] == [a.format for a in mine]
+    assert (o.PORT, o.DRIVE_PORT) == (ORIN_PORT, DRIVE_PORT)
     print('orin_nav ok')
 
 

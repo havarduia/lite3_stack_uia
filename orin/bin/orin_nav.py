@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""orin_nav - the Orin's Nav2 (Humble) and perception, joined over UDP (nav_stack_migration.md, step 5b).
+"""orin_nav - the Orin's Nav2 (Humble) and perception, joined over UDP.
 
 Perception's robot/orin_nav.py serves the navigate_to_pose action there and passes each goal here;
 this hands it to bt_navigator and sends back how it went, the route (/plan) and the command
@@ -10,7 +10,7 @@ Also, for Nav2 here:
   map -> odom from cloud_locate.py's fixes (sent to FIX_LOCAL_PORT too), each matched to the own pose
     at its FAST-LIO2 stamp: both come from the same /Odometry;
   perception's depth camera as /depth_grid (a StaticLayer in the local costmap) and /depth_points
-    (the collision monitor), its sonars as /sonar/front and /sonar/rear (shadow_nav.py's way).
+    (the collision monitor), its sonars as /sonar/front and /sonar/rear.
 No command goes back while the camera, the sonars or /terrain_h are stale, and a goal is cancelled when
 perception goes quiet (PERCEPTION_STALE_S): its sonars alone come 20 times a second.
 
@@ -27,9 +27,22 @@ import time
 
 import numpy as np
 
-from lio_relay import CLOCK_DRIFT, FIX, FIX_LOCAL_PORT, FIX_NO_MAP, FIX_OK, inv, join, twist, unpack_fix
-from shadow_nav import (CMD, DEPTH, DRIVE_PORT, GRID_RES, JETSON, MATCH_S, PORT, POSES_KEPT, SENSORS_STALE_S,
-                        SONAR, SONARS, base_of, depth_cells)
+from lio_relay import (CLOCK_DRIFT, FIX, FIX_LOCAL_PORT, FIX_NO_MAP, FIX_OK, MOUNT_XYZ, Q_MOUNT, inv, join, qconj,
+                       qmul, rot, twist, unpack_fix, yaw_of)
+
+PORT = 8044                 # perception's robot/orin_nav.py sends here
+JETSON = '192.168.1.103'    # perception
+CMD = struct.Struct('<c3d')         # V, MPPI's vx, vy, wz
+DRIVE_PORT = 8045           # perception's robot/orin_nav.py listens here
+POSES_KEPT = 200            # 20 s of own poses, to match a stamp from perception
+MATCH_S = 0.3               # own pose at most this far from that moment, or the datagram is dropped
+DEPTH = struct.Struct('<cd3d')      # D, when, perception's base_link in its odom; float32 (x, y) around base_link
+SONAR = struct.Struct('<cB4f')      # S, 0 front 1 rear, range, min, max, field of view
+SONARS = (('front', 0.23, 0.0), ('rear', -0.31, math.pi))     # robot/sonar_range.py: x on base_link, yaw
+GRID_RES = 0.05             # the costmap's
+GRID_HALF = 3.0             # m: the costmap is 6 x 6
+VOXEL = 0.1                 # perception's STVL voxel: each marks the cells it covers
+SENSORS_STALE_S = 1.0       # camera 5 Hz, sonars 20 Hz
 
 GOAL = struct.Struct('<cI3d')       # G, goal number, x y yaw on the map
 CANCEL = struct.Struct('<cI')       # C, goal number
@@ -40,7 +53,7 @@ MAX_POINTS = 1000
 PERCEPTION_STALE_S = 1.0
 STATUS_S = 0.5                      # how often the running goal's status is told
 MAP_TF_S = 0.1
-MAP_TF_AHEAD_S = 0.3                # map -> odom stamped this far past the newest odom, as AMCL postdates
+MAP_TF_AHEAD_S = 0.3                # map -> odom stamped this far past the newest odom, as Nav2 expects map -> odom to postdate
 FIX_MATCH_S = 0.05                  # the own pose this near the fix's stamp (FAST-LIO2 is 10 Hz)
 DEPTH_Z = 0.3                       # m: the camera's voxels as points this high, for the collision monitor
 # m: only camera voxels ahead of his nose (0.3 m, plus half of STVL's 0.1 m voxel) count. The camera is
@@ -50,6 +63,25 @@ DEPTH_Z = 0.3                       # m: the camera's voxels as points this high
 NOSE_X = 0.35
 RESYNC_S = 5.0                      # a camera stamp this much older than the offset says: perception's clock restarted
 
+
+def depth_cells(around, pts):
+    """Voxel centres in odom (n x 2) -> (origin x, y, size, occupancy) of a grid centred near `around`."""
+    n = int(round(2 * GRID_HALF / GRID_RES))
+    ox = math.floor((around[0] - GRID_HALF) / GRID_RES) * GRID_RES
+    oy = math.floor((around[1] - GRID_HALF) / GRID_RES) * GRID_RES
+    g = np.zeros((n, n), np.int8)
+    k = int(round(VOXEL / GRID_RES / 2))
+    for x, y in pts:
+        i, j = int((x - ox) / GRID_RES), int((y - oy) / GRID_RES)
+        g[max(j - k, 0):max(j + k, 0), max(i - k, 0):max(i + k, 0)] = 100
+    return ox, oy, n, g
+
+
+def base_of(p, q):
+    """The levelled FAST-LIO2 body pose -> base_link as (x, y, yaw); the mount is base_link -> body."""
+    q_base = qmul(q, qconj(Q_MOUNT))
+    lever = rot(q_base, MOUNT_XYZ)
+    return p[0] - lever[0], p[1] - lever[1], yaw_of(q_base)
 
 def clock_ahead(ahead, arrived, sent):
     """This computer's clock minus perception's, from a datagram's arrival here and its stamp there: the
@@ -237,7 +269,7 @@ def main():
             log.warn('perception went quiet: goal %d cancelled' % s['seq'])
             cancel()
 
-    # --- perception's camera and sonars (shadow_nav.py's) --------------------
+    # --- perception's camera and sonars ----------------------------------------
 
     def depth(arrived, when, rel):
         s['ahead'] = clock_ahead(s['ahead'], arrived, when)
@@ -272,7 +304,8 @@ def main():
         if s['stamp'] is None:
             return
         r = Range()
-        # the newest odom stamp, not now(): see shadow_nav.py (mppi_drive3)
+        # the newest odom stamp, not now(): the monitor looks the transform up at it, and a later
+        # stamp made it wait for tf (mppi_drive3)
         r.header.stamp, r.header.frame_id = s['stamp'], 'sonar_' + SONARS[i][0]
         r.radiation_type, r.field_of_view = Range.ULTRASOUND, fov
         # at its maximum the sonar saw nothing: inf (REP 117), which the collision monitor skips. As a
@@ -360,6 +393,19 @@ def check():
     a = clock_ahead(a, 1001.02, 1.0)
     assert abs(a - 1000.02) < 1e-9 and abs(clock_ahead(a, 1002.3, 2.0) - a) < 1e-3, a
     assert clock_ahead(a, 1010.0, 3.0) == 1007.0
+    # standing level: the body is pitched by the mount, base_link sits MOUNT_XYZ behind/below it
+    x, y, yaw = base_of((1.0 + MOUNT_XYZ[0], 2.0, 0.5 + MOUNT_XYZ[2]), Q_MOUNT)
+    assert abs(x - 1.0) < 1e-9 and abs(y - 2.0) < 1e-9 and abs(yaw) < 1e-9, (x, y, yaw)
+    # turned 90 deg left: the lever arm turns with him
+    qz = (0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
+    x, y, yaw = base_of((1.0, 2.0 + MOUNT_XYZ[0], 0.0), qmul(qz, Q_MOUNT))
+    assert abs(x - 1.0) < 1e-9 and abs(y - 2.0) < 1e-9 and abs(yaw - math.pi / 2) < 1e-9, (x, y, yaw)
+    # a voxel 1 m ahead of him (at (1, 2), facing +y) marks the 2 x 2 cells around (1, 3)
+    ox, oy, n, g = depth_cells((1.0, 2.0), [(1.0, 3.0)])
+    assert n == 120 and g.sum() == 4 * 100, (n, g.sum())
+    j, i = np.nonzero(g)
+    assert abs(ox + (i.mean() + 0.5) * GRID_RES - 1.0) < 0.03 and abs(oy + (j.mean() + 0.5) * GRID_RES - 3.0) < 0.03
+    assert depth_cells((0.0, 0.0), [(9.0, 9.0)])[3].sum() == 0      # off the grid: nothing
     print('orin_nav ok')
 
 

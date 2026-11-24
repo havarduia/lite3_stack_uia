@@ -23,7 +23,7 @@ from rclpy.serialization import deserialize_message
 from std_msgs.msg import Float64MultiArray
 
 from . import locate
-from .maps import FIT_POSE_STD, POSE_STD, Maps
+from .maps import Maps
 from .nav import LETHAL, Nav, status_text
 from .voice import Voice
 
@@ -131,8 +131,8 @@ def _cli():
     if not args:
         print(__doc__)
         print('commands: status stand sit auto walk <m> turn <deg> scan '
-              'nav-start nav-stop goto <m> cost estop [--disarm] action <%s>\n'
-              'on a floor map: floors, load <floor>, here <x> <y> <deg> [fit], places, '
+              'nav-stop cost estop [--disarm] action <%s>\n'
+              'Nav2, on a floor map: floors, load <floor>, here <x> <y> <deg>, goto <m>, places, '
               'save <name> [x y deg], forget <name>, go <name>, go <x> <y> [deg]'
               % '|'.join(ACTIONS))
         return
@@ -153,8 +153,6 @@ def _cli():
             print(bot.turn_deg(float(args[1])))
         elif cmd == 'scan':
             print(bot.scan_text())
-        elif cmd == 'nav-start':
-            bot.nav_start(); print('nav2 up')
         elif cmd == 'nav-stop':
             bot.nav_stop(); print('nav2 down')
         elif cmd == 'goto':
@@ -169,9 +167,7 @@ def _cli():
         elif cmd == 'load':
             bot.load_floor(args[1]); print('floor %s loaded; now: here <x> <y> <deg>' % args[1])
         elif cmd == 'here':
-            # 'fit' after the numbers: they are check_map.py's best fit, so AMCL is told they are good
-            std = FIT_POSE_STD if args[4:5] == ['fit'] else POSE_STD
-            bot.set_pose(*map(float, args[1:4]), std=std); time.sleep(0.5); print(bot.status())
+            bot.set_pose(*map(float, args[1:4])); time.sleep(0.5); print(bot.status())
         elif cmd == 'places':
             for p in bot.places():
                 print('%-24s (%.2f, %.2f, %.0f deg)' % (p['name'], p['x'], p['y'], p['yaw_deg']))

@@ -157,17 +157,16 @@ def lesson7_navigation():
     """Nav2: goal-directed movement that routes AROUND obstacles."""
     with StackRobot() as bot:
         bot.stand()
-        time.sleep(1.5)              # let the pose settle before the costmap builds
-
-        # nav_start() refuses unless he is standing AND the pose has settled.
-        # The stand-up transition jumps odometry by over a metre, and a costmap
-        # built across that jump shows a clear path into a real obstacle.
-        bot.nav_start()
+        # Nav2 runs on a floor map only, and goals need him placed on it: load a
+        # floor and say where he is first (the panel's Map tab: Load, I am here;
+        # or bot.load_floor('lab') and bot.set_pose(x, y, deg)).
+        if not bot.nav_running or not bot.localized:
+            print('  Nav2 is not up on a floor with him placed: load a floor and place him first')
+            return
         try:
             # ALWAYS pick the goal from the costmap, never from scan().
             # The costmap remembers obstacles the camera cannot currently see.
-            # settle: it starts out empty and unseen cells read as free, so
-            # wait until two readings a second apart agree.
+            # settle: re-read until two readings a second apart agree.
             profile = bot.cost_ahead(out_to=3.0, settle=10)
             for d, c in profile:
                 mark = ' LETHAL' if c is not None and c >= LETHAL else ''
@@ -183,7 +182,6 @@ def lesson7_navigation():
             status = bot.goto(goal)          # 4 = SUCCEEDED, 6 = ABORTED
             print('  goto(%.2f) -> %s' % (goal, status_text(status)))
         finally:
-            bot.nav_stop()                   # always tear the stack down
             bot.sit()
 
 

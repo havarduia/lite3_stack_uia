@@ -1,8 +1,9 @@
 """nav - the Nav2 stack: start/stop it, read its costmap, goto().
 Mixed into Lite3, so these are bot.nav_start(), bot.goto(1.5) etc.
 
-Mapless, Nav2 plans in odom and goto() goes some metres ahead. Map mode (a
-floor map, named places) is maps.py.
+Nav2 runs on a floor map only (maps.py: load_floor, places): the Orin's
+Nav2 plans and drives, perception keeps the map and the costmaps
+(env/start_nav2_map.sh). goto() goes some metres ahead of where he is.
 """
 import math
 import os
@@ -20,8 +21,7 @@ from .lio_relay import wrap
 # The stack runs in its own process group (setsid) and is killed by that
 # group: killing by name misses its children, or reaches the
 # static_transform_publisher the services use. docs/navigation.md.
-NAV_MARKERS = ('dr_nav2_mapless', 'bt_navigator', 'planner_server',
-               'controller_server', 'robot.sonar_range', 'robot.orin_nav')
+NAV_MARKERS = ('planner_server', 'controller_server', 'robot.sonar_range', 'robot.orin_nav')
 # Never kill a group holding one of these. Executables, not words: the
 # launch line itself says launch_realsense:=false.
 NAV_NEVER = ('jetson2motion', 'transfer_ros2', 'start_transfer',
@@ -127,8 +127,8 @@ class Nav:
 
     @property
     def nav_running(self):
-        # robot.orin_nav: the Orin's Nav2 drives, and its goals come through that (NAV_STACK=orin)
-        return subprocess.run(['pgrep', '-f', r'bt_navigator|robot\.orin_nav'],
+        # robot.orin_nav: the Orin's Nav2 drives, and its goals come through that
+        return subprocess.run(['pgrep', '-f', r'robot\.orin_nav'],
                               capture_output=True).returncode == 0
 
     @staticmethod
@@ -168,33 +168,29 @@ class Nav:
         return killed
 
     def nav_start(self, timeout=40.0, floor=None):
-        """Launch Nav2: mapless, or on a floor's map (load_floor()). Refuses
+        """Launch Nav2 on a floor's map (load_floor() is the usual way in). Refuses
         unless the robot is standing and its pose has settled - a costmap built
         across the stand-up pose jump shows a clear path straight into a real
         obstacle."""
+        if floor is None:
+            raise Lite3Error('Nav2 runs on a floor map only: load a floor first (load_floor, or Load on the panel)')
         self._require_standing()
         if not self.pose_settled():
             raise Lite3Error(
                 'pose is still moving; refusing to build a costmap around it. '
                 'Wait for the robot to settle after standing.')
-        script = ['start_nav2_mapless.sh']
-        if floor is not None:
-            place_file.floor_dir(floor)         # a floor that is there, before anything is stopped
-            script = ['start_nav2_map.sh', floor]
+        place_file.floor_dir(floor)             # a floor that is there, before anything is stopped
         self.nav_stop()
         # setsid: a session and process group of its own, for nav_stop().
         with open('/tmp/nav2.log', 'w') as log:
-            subprocess.Popen(['setsid', os.path.join(REPO, 'env', script[0])] + script[1:],
+            subprocess.Popen(['setsid', os.path.join(REPO, 'env', 'start_nav2_map.sh'), floor],
                              stdout=log, stderr=subprocess.STDOUT,
                              stdin=subprocess.DEVNULL)
         if not self._wait(lambda: self.nav_running, timeout):
             raise Lite3Error('nav2 did not come up; see /tmp/nav2.log')
-        if floor is not None:
-            # No costmap yet: Nav2 only finishes starting once AMCL has a pose.
-            if not self._wait(lambda: self._loc() is not None, timeout):
-                raise Lite3Error('nav2 is up but robot/locate.py says nothing; see /tmp/nav2.log')
-        elif not self._wait(lambda: self._node.grid is not None, timeout):
-            raise Lite3Error('nav2 is up but published no costmap; see /tmp/nav2.log')
+        # No global costmap yet: it comes once he is placed (set_pose)
+        if not self._wait(lambda: self._loc() is not None, timeout):
+            raise Lite3Error('nav2 is up but robot/locate.py says nothing; see /tmp/nav2.log')
         groups = self._nav_groups()
         if len(groups) > 1:
             raise Lite3Error(
@@ -204,8 +200,8 @@ class Nav:
 
     def turn_blocked(self, radians):
         """Why a turn on the spot by `radians` would put his body on an obstacle, or None.
-        Checks the local costmap (depth, sonars and lidar), else the global one (map mode:
-        the map and the lidar). With neither, says nothing: there is nothing to check."""
+        Checks the local costmap (depth, sonars and lidar), else the global one (the map
+        and the lidar). With neither, says nothing: there is nothing to check."""
         g = getattr(self._node, 'local_grid', None) or self._node.grid
         if g is None:
             return None
@@ -264,7 +260,7 @@ class Nav:
         self._require_standing()
         self._require_battery()
         if not self.nav_running:
-            raise Lite3Error('nav2 is not running - call nav_start() first')
+            raise Lite3Error('Nav2 is not running - load a floor first')
         if abs(forward) < 0.2:
             raise Lite3Error(
                 'goal is %.2f m away - too close for the planner to produce a '

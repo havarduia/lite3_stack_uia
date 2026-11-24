@@ -12,10 +12,6 @@ standing, and nothing checks posture before a trick:
     python3 -m robot.protocol camera [on|off]   # depth camera service only
     python3 -m robot.protocol voa [on|off]      # voa (brings the camera too)
 """
-import hashlib
-import hmac
-import os
-import secrets
 
 from lite3 import udp
 from lite3.depth import camera, service
@@ -33,28 +29,6 @@ RS_RTSP = 'rtsp://%s:8554/realsense' % MOTION_IP
 RS_WHEP = 'http://%s:8889/realsense/whep' % MOTION_IP
 CAMERA_RTC_PORT = 8189
 AP_RTC_PORT = 8190                   # the motion computer forwards it to udp_relay's 8189 (env/robot-nat.sh)
-
-# The panel's password (robot/hmi.py), on the perception computer only. Made at the
-# panel's first start if missing; delete it to get a new one, which logs every page out.
-PANEL_PASSWORD_FILE = os.path.expanduser('~/.lite3_panel_password')
-
-
-def panel_key():
-    """What a logged-in page's cookie holds, and what robot/rviz.py sends instead:
-    derived from the password, so changing the password logs everyone out."""
-    if not os.path.exists(PANEL_PASSWORD_FILE):
-        fd = os.open(PANEL_PASSWORD_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, 'w') as f:
-            f.write(secrets.token_urlsafe(9) + '\n')
-    password = open(PANEL_PASSWORD_FILE).read().strip()
-    return hmac.new(password.encode(), b'lite3 panel', hashlib.sha256).hexdigest()
-
-
-def panel_password_ok(given):
-    password = open(PANEL_PASSWORD_FILE).read().strip()
-    return hmac.compare_digest(given.encode(), password.encode())
-
-
 
 # --- app port (APP_ADDR): the app's AI switch, no longer used ---
 # AI_SERVICES = 0x21012109    # value 0x40 start, 0x00 stop

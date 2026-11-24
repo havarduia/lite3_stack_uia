@@ -54,8 +54,8 @@ Before turning (2026-10-14), his body (0.7 x 0.5 m, the
 
 ```
 python3 -m robot.stack status | stand | sit | walk 0.5 | turn 90 | scan |
-                       nav-start | nav-stop | goto 1.5 | cost | estop | action dance
-on a floor map: floors, load <floor>, here <x> <y> <deg> [fit], places,
+                       nav-stop | cost | estop | action dance
+Nav2, on a floor map: floors, load <floor>, here <x> <y> <deg>, goto 1.5, places,
                 save <name> [x y deg], forget <name>, go <name>, go <x> <y> [deg]
 ```
 
@@ -92,5 +92,5 @@ glass). The rear sonar is the *only* sensor behind the robot, so it keeps its
 full range.
 
 It writes `/tmp/sonar_range.ready` on first publish, and
-`start_nav2_mapless.sh` waits for that file before launching Nav2, otherwise
+`start_nav2_map.sh` waits for that file before launching Nav2, otherwise
 Nav2 complains "No range readings received" on every start.

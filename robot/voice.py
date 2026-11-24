@@ -350,7 +350,7 @@ def _cli(argv):
         else:
             print('unknown command %r - see --help' % cmd, file=sys.stderr)
             return 2
-    except TalkError as e:
+    except SpeakerError as e:      # TalkError is one too
         print('error: %s' % e, file=sys.stderr)
         return 1
     return 0

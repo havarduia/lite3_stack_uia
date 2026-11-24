@@ -13,7 +13,10 @@ with StackRobot() as bot:
         print('ABORT: less than 1.2 m ahead, not running a walking test')
         raise SystemExit(0)
 
-    bot.nav_start()
+    # Nav2 runs on a floor map: load one and place him first (panel: Load, I am here)
+    if not bot.nav_running or not bot.localized:
+        print('ABORT: Nav2 is not up on a floor with him placed')
+        raise SystemExit(0)
     prof = bot.cost_ahead(out_to=3.0, settle=10)
     print('cost ahead:', [(round(d, 2), c) for d, c in prof])
     goal = goal_ahead(prof)

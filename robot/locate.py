@@ -1,19 +1,16 @@
 """locate - does the robot know where it is on the floor map?
 
     python3 -m robot.locate <floor>     the node (env/start_nav2_map.sh starts it with Nav2)
-    python3 -m robot.locate <floor> cloud   the same from the Orin's 3D fixes (LOCALIZER=cloud)
     python3 -m robot.locate check       self-check, no ROS
 
 Publishes /localized twice a second: [state, x, y, yaw, spread_xy,
 spread_yaw, fit], the pose being base_link on the map. One node works this
 out so that every Lite3 (panel, command line, a script) reads the same
-answer from one small topic.
+answer from one small topic. It is judged from the Orin's 3D fixes on
+/cloud_fix (robot/cloud_locate.py; lio_relay.py makes them map -> odom): a
+recent accepted fix, its walls fitting, its spread narrow (CloudJudge).
 
-Two things have to hold. AMCL's estimate must be narrow (its covariance),
-and the lidar scan, drawn from that pose, must land on the map's walls.
-The second is what catches the wrong floor and a robot that was carried:
-AMCL settles on something there too. What it cannot catch is sliding along
-a corridor, where every wall still fits.
+Map and its fit() are for demos/check_map.py: a 2D scan against the floor map.
 """
 import collections
 import math
@@ -24,9 +21,8 @@ import time
 import numpy as np
 import yaml
 
-from . import places
 from .lio_relay import CLOUD_FIX_TOPIC, FIX_NO_MAP as CLOUD_NO_MAP, FIX_OK as CLOUD_OK, \
-    FIX_REFUSED as CLOUD_REFUSED, inv, join, wrap
+    FIX_REFUSED as CLOUD_REFUSED, join, wrap
 from lite3 import Lite3Error
 
 TOPIC = '/localized'
@@ -42,9 +38,7 @@ WHY = {NO_POSE: 'it has not been told where it is',
 
 PUBLISH_HZ = 2.0
 READ_HZ = 10.0          # odometry is sampled at this, not at its 50 Hz: each message costs Python time
-HISTORY_S = 2.0         # odometry remembered, to find where it was when a scan was taken
-EDGE_S = 0.15           # a stamp this far outside what is remembered still gets the nearest pose
-# Not tuned on a floor yet (plan task 10):
+# demos/check_map.py's fit:
 NEAR_M = 0.15           # a return this close to a mapped wall counts as on it
 FIT_RANGE_M = 10.0      # further returns are left out: a small heading error moves them far
 FIT_EVERY = 2           # every 2nd beam; only about half the 720 have a return at this height
@@ -53,9 +47,8 @@ FIT_MIN = 0.7           # at least this share of the returns on walls. In an emp
 MIN_RETURNS = 30
 SPREAD_XY_M = 0.5
 SPREAD_YAW = 0.35       # rad
-SCAN_OLD_S = 1.0
 FOUND_S = 1.0           # it must look right this long before it is called localized
-# LOCALIZER=cloud (robot/cloud_locate.py on the Orin, .planning/plans/cloud-localization.md)
+# the Orin's 3D localizer (robot/cloud_locate.py, .planning/plans/cloud-localization.md)
 CLOUD_OLD_S = 5.0       # no accepted 3D fix for this long: not placed (one refused fix is not lost)
 CLOUD_WALLS_MIN = 0.5   # as cloudreg.ACCEPT: the walls must fit this well
 WEAK_M = 15.0           # walked this far since a fix that pinned every direction (a plain corridor): too wide
@@ -133,40 +126,8 @@ class Map:
         return float(self.near[cy[on_map], cx[on_map]].sum()) / len(r)
 
 
-def spread(covariance):
-    """(metres, radians) of spread from a pose's 36-number covariance."""
-    return (math.sqrt(max(covariance[0], covariance[7], 0.0)), math.sqrt(max(covariance[35], 0.0)))
-
-
-def pose_at(history, stamp):
-    """Where odometry was at `stamp`, between the two samples either side of
-    it. history: (stamp, (x, y, yaw)), oldest first. None if `stamp` is
-    more than EDGE_S outside it."""
-    if not history or stamp < history[0][0] - EDGE_S or stamp > history[-1][0] + EDGE_S:
-        return None
-    before = history[0]
-    for after in history:
-        if after[0] >= stamp:
-            break
-        before = after
-    (t0, a), (t1, b) = before, after
-    f = min(1.0, max(0.0, (stamp - t0) / (t1 - t0))) if t1 > t0 else 0.0
-    return a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1]), wrap(a[2] + f * wrap(b[2] - a[2]))
-
-
-def judge(have_pose, scan_age, spread_xy, spread_yaw, fit):
-    """The state as it looks right now."""
-    if not have_pose:
-        return NO_POSE
-    if scan_age is None or scan_age > SCAN_OLD_S or fit is None:
-        return NO_SCAN
-    if spread_xy > SPREAD_XY_M or spread_yaw > SPREAD_YAW:
-        return SPREAD
-    return LOCALIZED if fit >= FIT_MIN else NO_FIT
-
-
 class CloudJudge:
-    """LOCALIZER=cloud: localized or not, from /cloud_fix rows (lio_relay.CloudFix.take).
+    """Localized or not, from /cloud_fix rows (lio_relay.CloudFix.take).
     take() each row with the odometry (x, y) of the moment; judge() any time."""
 
     def __init__(self):
@@ -220,81 +181,7 @@ class Steady:
         return self.yes
 
 
-def main(floor):
-    import rclpy
-    from geometry_msgs.msg import PoseWithCovarianceStamped
-    from nav_msgs.msg import Odometry
-    from rclpy.executors import SingleThreadedExecutor
-    from rclpy.qos import DurabilityPolicy, QoSProfile
-    from sensor_msgs.msg import LaserScan
-    from std_msgs.msg import Float64MultiArray
-
-    from lite3.robot import take_ready
-    from .stack import ODOM_TOPIC
-    from .lio_relay import yaw_of
-
-    floor_map = Map(os.path.join(places.floor_dir(floor), 'map.yaml'))
-    rclpy.init()
-    node = rclpy.create_node('locate')
-    executor = SingleThreadedExecutor()
-    executor.add_node(node)
-    pub = node.create_publisher(Float64MultiArray, TOPIC, 1)
-    new = {}        # the newest message of each kind, until it is looked at
-    latched = QoSProfile(depth=1)
-    latched.durability = DurabilityPolicy.TRANSIENT_LOCAL       # AMCL's last estimate, also if we start after it
-    node.create_subscription(Odometry, ODOM_TOPIC, lambda m: new.__setitem__('odom', m), 1)
-    node.create_subscription(LaserScan, SCAN_TOPIC, lambda m: new.__setitem__('scan', (time.monotonic(), m)), 1)
-    node.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', lambda m: new.__setitem__('amcl', m), latched)
-
-    def stamp(m):
-        return m.header.stamp.sec + m.header.stamp.nanosec * 1e-9
-
-    def flat(pose):
-        q = pose.orientation
-        return pose.position.x, pose.position.y, yaw_of((q.x, q.y, q.z, q.w))
-
-    history = collections.deque(maxlen=int(HISTORY_S * READ_HZ))
-    steady = Steady()
-    fix = wide = scan = None    # odom -> map; AMCL's spread; the newest (arrival, scan)
-    tick = 0
-    try:
-        while rclpy.ok():
-            take_ready(executor)
-            odom, amcl = new.pop('odom', None), new.pop('amcl', None)
-            scan = new.pop('scan', scan)
-            if odom is not None:
-                history.append((stamp(odom), flat(odom.pose.pose)))
-            if amcl is not None and history:
-                # AMCL says where it was at its scan's time: pair it with the odometry
-                # of that time. One from before we started gets the newest, and the
-                # scan fit below is what finds out if it has moved since.
-                then = pose_at(history, stamp(amcl)) or history[-1][1]
-                fix = join(flat(amcl.pose.pose), inv(then))
-                wide = spread(amcl.pose.covariance)
-            tick += 1
-            if tick % int(READ_HZ / PUBLISH_HZ) == 0:
-                now = time.monotonic()
-                pose, fit, age = (math.nan,) * 3, None, None
-                if fix is not None and history:
-                    x, y, yaw = join(fix, history[-1][1])
-                    pose = (x, y, wrap(yaw))
-                    if scan is not None:
-                        age, s = now - scan[0], scan[1]
-                        was = pose_at(history, stamp(s)) or history[-1][1]
-                        fit = floor_map.fit(join(fix, was), s.angle_min, s.angle_increment, s.ranges)
-                looks = judge(fix is not None, age, *(wide or (0.0, 0.0)), fit)
-                state = LOCALIZED if steady.update(now, looks == LOCALIZED) else \
-                    (SETTLING if looks == LOCALIZED else looks)
-                pub.publish(Float64MultiArray(data=[float(state)] + list(pose) + list(wide or (math.nan, math.nan))
-                                              + [math.nan if fit is None else fit]))
-            time.sleep(1.0 / READ_HZ)
-    except KeyboardInterrupt:
-        pass
-
-
-def main_cloud():
-    """LOCALIZER=cloud: the same /localized, judged from the Orin's 3D fixes on /cloud_fix
-    (lio_relay.py makes them map -> odom; AMCL is not running)."""
+def main():
     import rclpy
     from nav_msgs.msg import Odometry
     from rclpy.executors import SingleThreadedExecutor
@@ -391,35 +278,13 @@ def demo():
     assert m.fit(here, scan[0], scan[1], nothing) is None                         # nothing in range: cannot say
     assert m.fit(here, scan[0], scan[1], nothing[:400] + scan[2][400:]) > 0.95    # "nothing there" beams do not count
 
-    assert spread([0.04] + [0] * 6 + [0.09] + [0] * 27 + [0.01]) == (0.3, 0.1)
-
-    walk = collections.deque([(10.0 + i * 0.1, (i * 0.05, 0.0, 3.1 + i * 0.01)) for i in range(20)])
-    x, y, yaw = pose_at(walk, 10.55)
-    assert abs(x - 0.275) < 1e-9 and y == 0.0 and abs(wrap(yaw - 3.155)) < 1e-9
-    assert abs(pose_at(walk, 11.5)[2] - wrap(3.25)) < 1e-9                        # across +-pi
-    last = walk[-1][1]
-    assert pose_at(walk, 12.0) == (last[0], last[1], wrap(last[2])) and pose_at(walk, 9.9) == walk[0][1]    # just outside: the nearest
-    assert pose_at(walk, 12.5) is None and pose_at(walk, 9.0) is None and pose_at([], 1.0) is None
-
-    # AMCL placed him at (5, 5, 90 deg) when odometry read (1, 0, 0); odometry then goes 2 m on
-    fix = join((5.0, 5.0, math.pi / 2), inv((1.0, 0.0, 0.0)))
-    x, y, yaw = join(fix, (3.0, 0.0, 0.0))
-    assert abs(x - 5.0) < 1e-9 and abs(y - 7.0) < 1e-9 and abs(yaw - math.pi / 2) < 1e-9
-
-    assert judge(False, 0.1, 0.1, 0.1, 0.9) == NO_POSE
-    assert judge(True, None, 0.1, 0.1, None) == NO_SCAN and judge(True, 2.0, 0.1, 0.1, 0.9) == NO_SCAN
-    assert judge(True, 0.1, 0.1, 0.1, None) == NO_SCAN
-    assert judge(True, 0.1, 0.8, 0.1, 0.9) == SPREAD and judge(True, 0.1, 0.1, 0.5, 0.9) == SPREAD
-    assert judge(True, 0.1, 0.1, 0.1, 0.65) == NO_FIT and judge(True, 0.1, 0.1, 0.1, 0.9) == LOCALIZED
-    assert set(WHY) == set(range(6)) and len(Reading._fields) == 7
-
     s = Steady()
     assert not s.update(0.0, True) and not s.update(0.9, True) and s.update(1.0, True)    # held FOUND_S
     assert s.update(5.0, False) and s.update(6.9, False)                # someone walks past: still localized
     assert s.update(7.0, True) and s.update(8.0, False) and s.update(9.9, False)   # and the count starts again
     assert not s.update(10.0, False)                                    # wrong for LOST_S: lost
     assert not s.update(10.5, True) and not s.update(10.6, False) and not s.update(11.4, True)
-    # LOCALIZER=cloud: judged from the Orin's 3D fixes (/cloud_fix rows from lio_relay.CloudFix)
+    # judged from the Orin's 3D fixes (/cloud_fix rows from lio_relay.CloudFix)
     def row(state, mo=(5.0, 5.0, 0.0), walls=0.95, weak=0, sxy=0.05, syaw=0.01):
         return [float(state)] + list(mo) + [walls, 0.05, float(weak), sxy, syaw, 0.9]
     c = CloudJudge()
@@ -449,9 +314,7 @@ def demo():
 if __name__ == '__main__':
     if sys.argv[1:] == ['check']:
         demo()
-    elif len(sys.argv) == 3 and sys.argv[2] == 'cloud':
-        main_cloud()                    # the floor is the Orin's to know (cloud.txt); kept for the process name
     elif len(sys.argv) == 2:
-        main(sys.argv[1])
+        main()                          # the floor is the Orin's to know (cloud.txt); kept for the process name
     else:
         sys.exit(__doc__)

@@ -95,7 +95,7 @@ class Locator:
     def command(self, data):
         if data[:1] == b'M':
             path = data[1:].decode()
-            # empty: unload (Nav2 on AMCL). Either way an old "I am here" is not this map's
+            # empty: unload (no floor). Either way an old "I am here" is not this map's
             self.map = self.load(cloud_file(path)) if path else None
             self.track, self.pending_place, self.sent_corr = None, None, None
         elif data[:1] == b'I' and len(data) == PLACE.size:
@@ -331,7 +331,7 @@ def check():
         loc.on_cloud(raw_of(seen))
     r = unpack_fix(loc.fix(15.0))
     assert r['state'] == OK and abs(r['pose'][0] - truth_base[0]) < 0.03, r
-    # an empty 'M' unloads (Nav2 back on AMCL), and a place given before a map does not carry over
+    # an empty 'M' unloads (no floor), and a place given before a map does not carry over
     loc.command(b'M')
     assert loc.map is None and loc.track is None and unpack_fix(loc.fix(16.0))['state'] == NO_MAP
     loc.command(PLACE.pack(b'I', 1.0, 1.0, 0.0))

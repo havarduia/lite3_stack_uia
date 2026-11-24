@@ -1,8 +1,9 @@
 """maps - map mode: Nav2 on a floor map, where he is on it, named places.
 Mixed into StackRobot, so these are bot.load_floor(), bot.go_to('window') etc.
 
-A floor map under Nav2 (env/start_nav2_map.sh): AMCL places him on it from
-the lidar, robot/locate.py says whether to believe it. docs/navigation.md.
+A floor map under Nav2 (env/start_nav2_map.sh): the Orin's 3D localizer
+(robot/cloud_locate.py) places him on it, robot/locate.py says whether to
+believe it. docs/navigation.md.
 """
 import math
 import subprocess
@@ -18,8 +19,6 @@ from .nav import CANCELED, LETHAL, SUCCEEDED, dist
 LOC_STALE_S = 3.0       # locate.py speaks twice a second; quiet this long, he does not know where he is.
                         # Was 1.5: on the 200 m arcade map the panel's ROS thread fell behind and six
                         # goals in a row ended "couldn't get there" (2026-10-15, cause not proven)
-POSE_STD = (0.3, 0.26)  # m, rad: how sure a pose given by hand (a tap on the map) is taken to be
-FIT_POSE_STD = (0.1, 0.1)   # and one checked against the walls (demos/check_map.py's best fit)
 POSE_AGAIN_S = 8.0      # s before a pose not yet taken is said again: longer than the Orin's search (docs/navigation.md)
 ROUTE_TIMEOUT = 300.0   # s for one go_to() at least: 30 m takes about two minutes
 ROUTE_SLOWEST = 0.2     # m/s: longer routes get their length at this speed (135 m took over 300 s, 2026-10-15).
@@ -46,10 +45,10 @@ class Maps:
 
     @property
     def floor(self):
-        """The floor Nav2 is running on, or None: mapless, or Nav2 down. Read off
+        """The floor Nav2 is running on, or None while Nav2 is down. Read off
         the running stack, so every Lite3 gives the same answer."""
         out = subprocess.run(['pgrep', '-af', r'robot\.locate '], capture_output=True, text=True).stdout
-        words = out.split('\n')[0].split()       # ... robot.locate <floor> [cloud]
+        words = out.split('\n')[0].split()       # ... robot.locate <floor>
         return words[words.index('robot.locate') + 1] if 'robot.locate' in words[:-1] else None
 
     def _floor(self):
@@ -118,7 +117,7 @@ class Maps:
             raise Lite3Error('no way from %s to %s: %s' % (frame, target, self.lost_why() or 'no map pose'))
         return join(fix, (x, y, yaw)) if target == 'map' else join(inv(fix), (x, y, yaw))
 
-    def set_pose(self, x, y, yaw_deg, timeout=30.0, std=POSE_STD):
+    def set_pose(self, x, y, yaw_deg, timeout=30.0):
         """Tell him where he is on the loaded floor's map, roughly: within about
         half a metre and 20 degrees. Returns once robot/locate.py agrees and
         Nav2, which was waiting for this, has finished starting. Raises if what
@@ -126,7 +125,7 @@ class Maps:
         from geometry_msgs.msg import PoseWithCovarianceStamped
 
         self._floor()
-        self._require_standing()            # lying down the relay passes no scans on: AMCL would see nothing
+        self._require_standing()            # FAST-LIO2 starts once he stands, and the Orin places him with it
         if self._pose_pub is None:
             self._pose_pub = self._node.create_publisher(PoseWithCovarianceStamped, '/initialpose', 1)
         m = PoseWithCovarianceStamped()
@@ -134,14 +133,12 @@ class Maps:
         m.pose.pose.position.x, m.pose.pose.position.y = float(x), float(y)
         m.pose.pose.orientation.z = math.sin(math.radians(yaw_deg) / 2.0)
         m.pose.pose.orientation.w = math.cos(math.radians(yaw_deg) / 2.0)
-        m.pose.covariance[0] = m.pose.covariance[7] = std[0] ** 2
-        m.pose.covariance[35] = std[1] ** 2
         end, said = time.monotonic() + timeout, None
         while time.monotonic() < end:
             loc = self._loc()
             taken = loc is not None and int(loc.state) != locate.NO_POSE and dist((loc.x, loc.y), (x, y)) < 1.0
             # Once whatever he believes (near and wide, after a carry, looks taken); then again
-            # until AMCL has it: it may not be listening yet, or still hold an older pose.
+            # until the Orin has it: it may not be listening yet, or still hold an older pose.
             if said is None or (not taken and time.monotonic() - said > POSE_AGAIN_S):
                 self._pose_pub.publish(m)
                 said = time.monotonic()
